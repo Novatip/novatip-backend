@@ -1,0 +1,130 @@
+// schema.prisma
+// Novatip backend data model.
+// Run `npm run db:generate` after changes.
+// Run `npm run db:migrate` to apply locally.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Creator ───────────────────────────────────────────────────────────────────
+
+model Creator {
+  id          String   @id @default(cuid())
+  /// Stellar account address (G...)
+  walletAddress String @unique
+  /// Public slug used in tip URLs, e.g. "alice" for /@alice
+  slug        String   @unique
+  displayName String?
+  bio         String?
+  avatarUrl   String?
+  /// On-chain jar ID registered in tip_splitter, e.g. "@alice"
+  jarId       String   @unique
+  /// JSON array of Split objects [{ to, bps }]
+  splits      Json     @default("[]")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tips        Tip[]
+  webhooks    Webhook[]
+  notifications Notification[]
+
+  @@index([walletAddress])
+  @@index([slug])
+}
+
+// ── Tip ───────────────────────────────────────────────────────────────────────
+
+model Tip {
+  id          String   @id @default(cuid())
+  /// Soroban transaction hash
+  txHash      String   @unique
+  /// Ledger sequence the TipReceived event was emitted in
+  ledger      Int
+  /// Ledger close timestamp
+  ledgerAt    DateTime
+  /// Sender Stellar address
+  fromAddress String
+  /// Amount in USDC stroops (stored as String to preserve i128 precision)
+  amount      String
+  /// Optional supporter message
+  message     String   @default("")
+  creatorId   String
+  creator     Creator  @relation(fields: [creatorId], references: [id])
+  createdAt   DateTime @default(now())
+
+  @@index([creatorId])
+  @@index([fromAddress])
+  @@index([ledger])
+  @@index([ledgerAt])
+}
+
+// ── Webhook ───────────────────────────────────────────────────────────────────
+
+model Webhook {
+  id        String   @id @default(cuid())
+  creatorId String
+  creator   Creator  @relation(fields: [creatorId], references: [id])
+  /// Target URL to POST tip events to
+  url       String
+  /// Shared secret for HMAC signature verification
+  secret    String
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  deliveries WebhookDelivery[]
+
+  @@index([creatorId])
+}
+
+model WebhookDelivery {
+  id         String   @id @default(cuid())
+  webhookId  String
+  webhook    Webhook  @relation(fields: [webhookId], references: [id])
+  /// HTTP status code returned by the target
+  statusCode Int?
+  /// Whether delivery succeeded (2xx response)
+  success    Boolean  @default(false)
+  /// Request payload JSON
+  payload    Json
+  /// Response body (truncated to 1 KB)
+  response   String?
+  attemptedAt DateTime @default(now())
+
+  @@index([webhookId])
+}
+
+// ── Notification ──────────────────────────────────────────────────────────────
+
+model Notification {
+  id        String   @id @default(cuid())
+  creatorId String
+  creator   Creator  @relation(fields: [creatorId], references: [id])
+  type      NotificationType
+  /// Serialised payload (tip amount, sender, message, etc.)
+  payload   Json
+  sentAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([creatorId])
+}
+
+enum NotificationType {
+  TIP_RECEIVED
+  WEBHOOK_FAILED
+}
+
+// ── IndexerCursor ─────────────────────────────────────────────────────────────
+// Tracks the last ledger the indexer processed so restarts resume correctly.
+
+model IndexerCursor {
+  id          Int    @id @default(1)
+  lastLedger  Int    @default(0)
+  updatedAt   DateTime @updatedAt
+}
