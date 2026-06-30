@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.env
+*.tsbuildinfo
+coverage/
+prisma/migrations/*.sql
