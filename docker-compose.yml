@@ -1,0 +1,78 @@
+# docker-compose.yml
+# Local development stack: backend + PostgreSQL + Redis
+#
+# Usage:
+#   docker compose up -d          # start all services
+#   docker compose logs -f api    # tail backend logs
+#   docker compose down -v        # stop and remove volumes
+
+version: "3.9"
+
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER:     novatip
+      POSTGRES_PASSWORD: novatip
+      POSTGRES_DB:       novatip
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U novatip"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis ───────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── Backend API ─────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      NODE_ENV:                  development
+      PORT:                      3001
+      HOST:                      0.0.0.0
+      DATABASE_URL:              postgresql://novatip:novatip@postgres:5432/novatip
+      REDIS_URL:                 redis://redis:6379
+      JWT_SECRET:                local-dev-secret-change-me
+      STELLAR_NETWORK:           testnet
+      SOROBAN_RPC_URL:           https://soroban-testnet.stellar.org
+      HORIZON_URL:               https://horizon-testnet.stellar.org
+      NETWORK_PASSPHRASE:        "Test SDF Network ; September 2015"
+      TIP_SPLITTER_CONTRACT_ID:  ${TIP_SPLITTER_CONTRACT_ID:-CPLACEHOLDER}
+      USDC_CONTRACT_ID:          ${USDC_CONTRACT_ID:-CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA}
+      INDEXER_START_LEDGER:      ${INDEXER_START_LEDGER:-0}
+      APP_BASE_URL:              http://localhost:3000
+      RESEND_API_KEY:            ${RESEND_API_KEY:-}
+      EMAIL_FROM:                ${EMAIL_FROM:-tips@novatip.xyz}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:
