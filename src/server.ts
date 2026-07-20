@@ -58,10 +58,12 @@ export async function buildServer(): Promise<FastifyInstance> {
   // ── Routes ────────────────────────────────────────────────────────────────
   await server.register(
     async (app) => {
-      // Health check — used by docker-compose and load balancers
+      // Simple health check — kept for backward compatibility. Richer
+      // liveness/readiness probes live under /health (see healthRoutes).
       app.get("/health", async () => ({ status: "ok", ts: new Date().toISOString() }));
 
       // Feature routes registered in subsequent commits
+      const { healthRoutes }   = await import("./modules/health/health.routes.js");
       const { authRoutes }     = await import("./modules/auth/auth.routes.js");
       const { creatorRoutes }  = await import("./modules/creator/creator.routes.js");
       const { qrRoutes }       = await import("./modules/qr/qr.routes.js");
@@ -69,6 +71,7 @@ export async function buildServer(): Promise<FastifyInstance> {
       const { analyticsRoutes }= await import("./modules/analytics/analytics.routes.js");
       const { webhookRoutes }  = await import("./modules/webhooks/webhooks.routes.js");
 
+      await app.register(healthRoutes,    { prefix: "/health" });
       await app.register(authRoutes,      { prefix: "/auth" });
       await app.register(creatorRoutes,   { prefix: "/creators" });
       await app.register(qrRoutes,        { prefix: "/qr" });

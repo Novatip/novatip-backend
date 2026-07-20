@@ -39,6 +39,10 @@ APP_BASE_URL - Frontend base URL (default: http://localhost:3000)
 
 ## API Overview  (base: /api/v1)
 
+GET  /health                 - Simple liveness ping
+GET  /health/live            - Liveness (process up, no dependency checks)
+GET  /health/ready           - Readiness (PostgreSQL + Redis reachable; 503 if not)
+
 POST /auth/challenge         - Issue one-time sign-in nonce
 POST /auth/verify            - Verify signature, return JWT
 GET  /auth/me                - Current user (JWT)
