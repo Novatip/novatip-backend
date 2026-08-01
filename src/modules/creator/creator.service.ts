@@ -10,6 +10,7 @@
  *      backend just records the claimed slug + jarId)
  */
 
+import type { Prisma } from "@prisma/client";
 import { db } from "../../db.js";
 import { cacheInvalidate, cacheGet, cacheSet } from "../../redis.js";
 
@@ -17,6 +18,22 @@ const SLUG_REGEX = /^[a-z0-9_-]{3,32}$/;
 const PROFILE_CACHE_TTL = 60; // seconds
 
 // ── Types ─────────────────────────────────────────────────────────────────────
+
+/**
+ * The public-facing creator shape returned by getCreatorBySlug.
+ * Matches the `select` in that query exactly — both the cache and
+ * database branches must conform to this type.
+ */
+export interface PublicCreator {
+  id:          string;
+  slug:        string;
+  displayName: string | null;
+  bio:         string | null;
+  avatarUrl:   string | null;
+  jarId:       string;
+  splits:      Prisma.JsonValue;
+  createdAt:   Date;
+}
 
 export interface ClaimSlugInput {
   creatorId: string;
@@ -76,9 +93,9 @@ export async function claimSlug(input: ClaimSlugInput) {
  * Get a public creator profile by slug.
  * Result is cached in Redis for 60 seconds.
  */
-export async function getCreatorBySlug(slug: string) {
+export async function getCreatorBySlug(slug: string): Promise<PublicCreator> {
   const cacheKey = `creator:${slug}`;
-  const cached = await cacheGet<ReturnType<typeof db.creator.findUnique>>(cacheKey);
+  const cached = await cacheGet<PublicCreator>(cacheKey);
   if (cached) return cached;
 
   const creator = await db.creator.findUnique({

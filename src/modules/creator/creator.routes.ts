@@ -16,6 +16,7 @@ import {
   updateProfile,
   updateCreatorSplits,
   isSlugAvailable,
+  type PublicCreator,
 } from "./creator.service.js";
 import { httpsUrl } from "../../utils/validation.js";
 
@@ -41,7 +42,7 @@ export const creatorRoutes: FastifyPluginAsync = async (app) => {
   // ── GET /:slug — public ────────────────────────────────────────────────────
   app.get("/:slug", async (request, reply) => {
     const { slug } = request.params as { slug: string };
-    const creator = await getCreatorBySlug(slug);
+    const creator: PublicCreator = await getCreatorBySlug(slug);
     return reply.send({ creator });
   });
 
