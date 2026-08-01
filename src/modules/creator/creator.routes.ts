@@ -17,6 +17,7 @@ import {
   updateCreatorSplits,
   isSlugAvailable,
 } from "./creator.service.js";
+import { httpsUrl } from "../../utils/validation.js";
 
 const ClaimBody = z.object({
   slug:        z.string().min(3).max(32),
@@ -29,7 +30,7 @@ const ClaimBody = z.object({
 const UpdateProfileBody = z.object({
   displayName: z.string().max(80).optional(),
   bio:         z.string().max(300).optional(),
-  avatarUrl:   z.string().url().optional(),
+  avatarUrl:   httpsUrl.optional(),
 });
 
 const UpdateSplitsBody = z.object({
