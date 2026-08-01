@@ -12,6 +12,9 @@ import { createHmac } from "crypto";
 import { db } from "../../db.js";
 import type { TipEvent } from "@novatip/sdk";
 import { stroopsToUsdc } from "@novatip/sdk";
+import { logger } from "../../utils/logger.js";
+
+const webhookLogger = logger.child({ component: "webhook" });
 
 const TIMEOUT_MS    = 5_000;
 const MAX_BODY_SIZE = 1_024; // truncate response log to 1 KB
@@ -108,7 +111,10 @@ async function deliver(
   });
 
   if (!success) {
-    console.warn(`[webhook] delivery failed → ${webhook.url} (${statusCode ?? "no response"})`);
+    webhookLogger.warn(
+      { url: webhook.url, statusCode: statusCode ?? null },
+      "delivery failed",
+    );
   }
 }
 

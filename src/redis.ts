@@ -12,6 +12,9 @@
 
 import Redis from "ioredis";
 import { config } from "./config.js";
+import { logger } from "./utils/logger.js";
+
+const redisLogger = logger.child({ component: "redis" });
 
 export const redis = new Redis(config.redisUrl, {
   maxRetriesPerRequest: 3,
@@ -20,11 +23,11 @@ export const redis = new Redis(config.redisUrl, {
 });
 
 redis.on("connect", () => {
-  console.info("[redis] connected");
+  redisLogger.info("connected");
 });
 
 redis.on("error", (err: Error) => {
-  console.error("[redis] connection error:", err.message);
+  redisLogger.error({ err }, "connection error");
 });
 
 /**
