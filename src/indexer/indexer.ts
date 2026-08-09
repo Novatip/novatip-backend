@@ -22,7 +22,7 @@ import {
   type TipEvent,
 } from "@novatip/sdk";
 import { config } from "../config.js";
-import { persistTip, updateCursor, readCursor } from "./persist.ts";
+import { persistTip, updateCursor, readCursor } from "./persist.js";
 import { dispatchWebhooks } from "../modules/webhooks/webhooks.service.js";
 import { sendTipNotification } from "../modules/notifications/email.service.js";
 
