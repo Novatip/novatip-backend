@@ -31,7 +31,7 @@ export async function sendTipNotification(event: TipEvent): Promise<void> {
 
   try {
     // Dynamic import so Resend is only loaded when the API key is set
-    const { Resend } = await import("@resend/node");
+    const { Resend } = await import("resend");
     const resend     = new Resend(config.resend.apiKey);
 
     await resend.emails.send({
