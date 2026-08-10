@@ -99,7 +99,7 @@ export async function startIndexer(): Promise<void> {
         await updateCursor(startLedger);
       }
     } catch (err) {
-      console.error("[indexer] poll error:", err);
+      indexerLogger.error({ err, startLedger }, "poll error");
       // Back off slightly on error to avoid hammering the RPC
       await sleep(POLL_INTERVAL_MS * 2);
       continue;
@@ -128,7 +128,7 @@ async function handleEvent(event: TipEvent): Promise<void> {
     await dispatchWebhooks(event);
     await sendTipNotification(event);
   } catch (err) {
-    console.error(`[indexer] failed to handle event ${txHash}:`, err);
+    indexerLogger.error({ err, txHash }, "failed to handle event");
   }
 }
 
