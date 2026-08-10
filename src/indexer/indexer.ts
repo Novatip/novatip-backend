@@ -24,6 +24,7 @@ import {
   type TipEvent,
 } from "@novatip/sdk";
 import { config } from "../config.js";
+import { logger } from "../utils/logger.js";
 import { planBatch, isSaturatedLedger } from "./cursor.js";
 import { persistTip, updateCursor, readCursor } from "./persist.ts";
 import { dispatchWebhooks } from "../modules/webhooks/webhooks.service.js";
@@ -31,6 +32,8 @@ import { sendTipNotification } from "../modules/notifications/email.service.js";
 
 const POLL_INTERVAL_MS = 6_000;
 const POLL_LIMIT       = 200;
+
+const indexerLogger = logger.child({ component: "indexer" });
 
 // ── Build network config ──────────────────────────────────────────────────────
 
@@ -62,8 +65,9 @@ export async function startIndexer(): Promise<void> {
   const network      = resolveNetwork();
   const contractId   = config.stellar.tipSplitterContractId;
 
-  console.info(
-    `[indexer] starting — contract=${contractId} network=${network.name}`,
+  indexerLogger.info(
+    { contractId, network: network.name },
+    "starting",
   );
 
   // Determine start ledger: resume from cursor or use env override
@@ -72,7 +76,7 @@ export async function startIndexer(): Promise<void> {
     ? savedCursor + 1
     : config.stellar.indexerStartLedger;
 
-  console.info(`[indexer] resuming from ledger ${startLedger}`);
+  indexerLogger.info({ startLedger }, "resuming from ledger");
 
   while (running) {
     try {
@@ -84,6 +88,10 @@ export async function startIndexer(): Promise<void> {
       });
 
       if (events.length > 0) {
+        indexerLogger.info(
+          { eventCount: events.length, startLedger },
+          "processing events",
+        );
         if (isSaturatedLedger(events, POLL_LIMIT)) {
           console.warn(
             `[indexer] ledger ${events[0]!.ledger} returned a full batch of ${POLL_LIMIT} event(s) — any beyond that are unreachable`,
@@ -111,7 +119,7 @@ export async function startIndexer(): Promise<void> {
         }
       }
     } catch (err) {
-      console.error("[indexer] poll error:", err);
+      indexerLogger.error({ err, startLedger }, "poll error");
       // Back off slightly on error to avoid hammering the RPC
       await sleep(POLL_INTERVAL_MS * 2);
       continue;
@@ -126,7 +134,7 @@ export async function startIndexer(): Promise<void> {
  */
 export function stopIndexer(): void {
   running = false;
-  console.info("[indexer] stopped");
+  indexerLogger.info("stopped");
 }
 
 // ── Event handler ─────────────────────────────────────────────────────────────
@@ -140,7 +148,7 @@ async function handleEvent(event: TipEvent): Promise<void> {
     await dispatchWebhooks(event);
     await sendTipNotification(event);
   } catch (err) {
-    console.error(`[indexer] failed to handle event ${txHash}:`, err);
+    indexerLogger.error({ err, txHash }, "failed to handle event");
   }
 }
 
