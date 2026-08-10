@@ -10,6 +10,8 @@
  * Design:
  *   - Runs as a long-lived async loop inside the same Node process.
  *   - Resumes from the last processed ledger stored in IndexerCursor.
+ *   - startLedger is inclusive, so the loop advances past each ledger it has
+ *     fully processed (see cursor.ts) — a tip is handled exactly once.
  *   - Idempotent: duplicate events are silently skipped (upsert on txHash).
  *   - Poll interval: 6 seconds (roughly one Stellar ledger close).
  */
@@ -23,11 +25,13 @@ import {
 } from "@novatip/sdk";
 import { config } from "../config.js";
 import { logger } from "../utils/logger.js";
+import { planBatch, isSaturatedLedger } from "./cursor.js";
 import { persistTip, updateCursor, readCursor } from "./persist.ts";
 import { dispatchWebhooks } from "../modules/webhooks/webhooks.service.js";
 import { sendTipNotification } from "../modules/notifications/email.service.js";
 
 const POLL_INTERVAL_MS = 6_000;
+const POLL_LIMIT       = 200;
 
 const indexerLogger = logger.child({ component: "indexer" });
 
@@ -80,7 +84,7 @@ export async function startIndexer(): Promise<void> {
         contractId,
         network,
         startLedger,
-        limit: 200,
+        limit: POLL_LIMIT,
       });
 
       if (events.length > 0) {
@@ -88,15 +92,31 @@ export async function startIndexer(): Promise<void> {
           { eventCount: events.length, startLedger },
           "processing events",
         );
-
-        for (const event of events) {
-          await handleEvent(event);
-          if (event.ledger > startLedger) {
-            startLedger = event.ledger;
-          }
+        if (isSaturatedLedger(events, POLL_LIMIT)) {
+          console.warn(
+            `[indexer] ledger ${events[0]!.ledger} returned a full batch of ${POLL_LIMIT} event(s) — any beyond that are unreachable`,
+          );
         }
 
-        await updateCursor(startLedger);
+        const { toProcess, nextStartLedger, cursorLedger } = planBatch(
+          events,
+          startLedger,
+          POLL_LIMIT,
+        );
+
+        console.info(`[indexer] processing ${toProcess.length} event(s) from ledger ${startLedger}`);
+
+        for (const event of toProcess) {
+          await handleEvent(event);
+        }
+
+        // Advance past the ledgers just handled — startLedger is inclusive, so
+        // leaving it on a processed ledger re-runs webhooks and emails.
+        startLedger = nextStartLedger;
+
+        if (cursorLedger !== null) {
+          await updateCursor(cursorLedger);
+        }
       }
     } catch (err) {
       indexerLogger.error({ err, startLedger }, "poll error");
