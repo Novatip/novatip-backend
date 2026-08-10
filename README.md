@@ -71,6 +71,33 @@ DELETE /webhooks/:id         - Remove webhook (JWT)
 Polls Soroban RPC every 6s for TipReceived events, persists to PostgreSQL,
 dispatches webhooks, sends email notifications. Resumes from IndexerCursor.
 
+### Cursor semantics
+
+fetchTipEvents treats startLedger as inclusive, so after handling a batch the
+loop advances to lastProcessedLedger + 1. IndexerCursor stores the last ledger
+processed in full; startup resumes at cursor + 1.
+
+A batch that comes back full (200 events) may have been cut off part-way
+through its highest ledger. That ledger is held back and re-fetched on the next
+poll rather than skipped — so only ledgers known to be complete are marked done.
+Persisting a tip is idempotent (upsert on txHash), but webhook and email
+dispatch are not, which is why the cursor must not linger on a handled ledger.
+
+### Manual verification against testnet
+
+1. Point .env at testnet and set INDEXER_START_LEDGER to the current ledger
+   (`curl -s $SOROBAN_RPC_URL -d '{"jsonrpc":"2.0","id":1,"method":"getLatestLedger"}'`).
+2. Register a webhook pointing at a request-capture endpoint, then start the
+   server (`npm run dev`) and send one tip to the jar.
+3. Watch the logs across the next several 6s polls. Expect exactly one
+   "processing 1 event(s)" line — before the fix, every poll re-processed that
+   tip until a newer one arrived.
+4. Confirm the capture endpoint received exactly one delivery and the creator
+   got exactly one email.
+5. Check the cursor advanced past the tip's ledger:
+   `SELECT "lastLedger" FROM "IndexerCursor" WHERE id = 1;`
+6. Restart the server and confirm the tip is not re-delivered on resume.
+
 ## Webhook Signatures
 
 Header: X-Novatip-Signature: sha256=<hex>
@@ -81,6 +108,7 @@ Verify: createHmac("sha256", secret).update(body).digest("hex")
 npm run dev               - hot reload
 npm run build             - compile TypeScript
 npm run start             - run compiled output
+npm run test              - jest
 npm run typecheck         - tsc --noEmit
 npm run lint              - eslint
 npm run db:generate       - regenerate Prisma client
