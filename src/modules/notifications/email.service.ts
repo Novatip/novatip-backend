@@ -25,18 +25,33 @@ export async function sendTipNotification(event: TipEvent): Promise<void> {
 
   if (!creator) return;
 
+  // TODO: add a creator email field to the schema in a future commit.
+  // Until it exists there is no address to send to, and Resend rejects an
+  // empty recipient list — so skip rather than issue a request that can only
+  // fail.
+  const recipients: string[] = [];
+
+  if (recipients.length === 0) {
+    console.warn(
+      `[notifications] no email on record for creator ${creator.slug} — skipping tip notification`,
+    );
+    return;
+  }
+
   const amount      = formatUsdc(event.amount, 2);
   const displayName = creator.displayName ?? creator.slug;
   const message     = event.message ? `"${event.message}"` : "No message left.";
 
   try {
     // Dynamic import so Resend is only loaded when the API key is set
-    const { Resend } = await import("@resend/node");
+    const { Resend } = await import("resend");
     const resend     = new Resend(config.resend.apiKey);
 
-    await resend.emails.send({
+    // Resend reports API failures via the returned `error` rather than by
+    // throwing, so the catch below never sees them — check it explicitly.
+    const { error } = await resend.emails.send({
       from:    config.resend.from,
-      to:      [], // TODO: add creator email field to schema in a future commit
+      to:      recipients,
       subject: `💸 You received $${amount} USDC on Novatip!`,
       html: `
         <h2>Hey ${displayName}!</h2>
@@ -50,7 +65,12 @@ export async function sendTipNotification(event: TipEvent): Promise<void> {
       `,
     });
 
-    // Record notification in DB
+    if (error) {
+      console.error("[notifications] Resend rejected the email:", error);
+      return;
+    }
+
+    // Record notification in DB only once the send actually succeeded
     await db.notification.create({
       data: {
         creatorId: creator.id,
