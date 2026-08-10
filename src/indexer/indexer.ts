@@ -10,6 +10,8 @@
  * Design:
  *   - Runs as a long-lived async loop inside the same Node process.
  *   - Resumes from the last processed ledger stored in IndexerCursor.
+ *   - Quiet periods still move the cursor: an empty batch advances it to chain
+ *     head (throttled, see cursor.ts) so restarts don't re-scan idle ledgers.
  *   - startLedger is inclusive, so the loop advances past each ledger it has
  *     fully processed (see cursor.ts) — a tip is handled exactly once.
  *   - Idempotent: duplicate events are silently skipped (upsert on txHash).
@@ -24,6 +26,8 @@ import {
   type TipEvent,
 } from "@novatip/sdk";
 import { config } from "../config.js";
+import { isIdleCheckDue, planIdleAdvance } from "./cursor.js";
+import { fetchLatestLedger } from "./rpc.js";
 import { logger } from "../utils/logger.js";
 import { planBatch, isSaturatedLedger } from "./cursor.js";
 import { persistTip, updateCursor, readCursor } from "./persist.ts";
@@ -76,10 +80,31 @@ export async function startIndexer(): Promise<void> {
     ? savedCursor + 1
     : config.stellar.indexerStartLedger;
 
+  // Cursor bookkeeping for quiet periods
+  let persistedCursor  = savedCursor;
+  let lastIdleCheckAt: number | null = null;
+
+  console.info(`[indexer] resuming from ledger ${startLedger}`);
   indexerLogger.info({ startLedger }, "resuming from ledger");
 
   while (running) {
     try {
+      // Read chain head *before* fetching so an empty batch provably covers
+      // every ledger up to it. Only read when the idle check is due — it is an
+      // extra RPC round trip that is pointless the rest of the time.
+      let observedHead: number | null = null;
+
+      if (isIdleCheckDue(Date.now(), lastIdleCheckAt)) {
+        lastIdleCheckAt = Date.now();
+
+        try {
+          observedHead = await fetchLatestLedger(config.stellar.rpcUrl);
+        } catch (err) {
+          // Cursor freshness is an optimisation — never let it stop indexing.
+          console.warn("[indexer] could not read chain head:", err);
+        }
+      }
+
       const events = await fetchTipEvents({
         contractId,
         network,
@@ -110,6 +135,19 @@ export async function startIndexer(): Promise<void> {
           await handleEvent(event);
         }
 
+        await updateCursor(startLedger);
+        persistedCursor = startLedger;
+      } else {
+        // No tips in this range — advance to chain head so an idle stretch
+        // doesn't turn into a backfill on the next restart.
+        const advance = planIdleAdvance(observedHead, startLedger, persistedCursor);
+
+        if (advance) {
+          console.info(`[indexer] idle — advancing cursor to ledger ${advance.cursorLedger}`);
+
+          await updateCursor(advance.cursorLedger);
+          startLedger     = advance.nextStartLedger;
+          persistedCursor = advance.cursorLedger;
         // Advance past the ledgers just handled — startLedger is inclusive, so
         // leaving it on a processed ledger re-runs webhooks and emails.
         startLedger = nextStartLedger;

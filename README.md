@@ -71,6 +71,34 @@ DELETE /webhooks/:id         - Remove webhook (JWT)
 Polls Soroban RPC every 6s for TipReceived events, persists to PostgreSQL,
 dispatches webhooks, sends email notifications. Resumes from IndexerCursor.
 
+### Cursor during quiet periods
+
+An empty batch proves no tips exist between the cursor and chain head, so the
+cursor advances to the head rather than staying pinned to the last ledger that
+contained a tip. Without this, a restart after a quiet week re-scans every
+ledger since — and a cursor old enough to fall outside the RPC's event
+retention window makes the first fetch fail outright.
+
+Chain head is read via getLatestLedger *before* each event fetch, so an empty
+result is known to cover everything up to it; reading afterwards could skip a
+tip that landed in between. Both the head read and the cursor write are
+throttled to once a minute (IDLE_CHECK_INTERVAL_MS in src/indexer/cursor.ts),
+so a 6s poll cadence costs neither an extra RPC round trip nor a Postgres write.
+A failed head read is logged and skipped — it never blocks event indexing.
+
+### Manual verification against testnet
+
+1. Point .env at testnet with a jar that receives no tips during the test.
+2. Start the server (`npm run dev`) and note the cursor:
+   `SELECT "lastLedger" FROM "IndexerCursor" WHERE id = 1;`
+3. Leave it idle for ~5 minutes. Expect roughly one "idle — advancing cursor"
+   log line per minute, not one per 6s poll, and the stored lastLedger tracking
+   chain head (compare against getLatestLedger).
+4. Restart the server. The "resuming from ledger" line should be within ~12
+   ledgers of chain head — before the fix it resumed from the last ledger that
+   contained a tip.
+5. Point SOROBAN_RPC_URL at an unreachable host and confirm the indexer logs
+   "could not read chain head" and keeps polling rather than stalling.
 ### Cursor semantics
 
 fetchTipEvents treats startLedger as inclusive, so after handling a batch the

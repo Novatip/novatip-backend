@@ -1,169 +1,196 @@
 /**
  * __tests__/indexer/cursor.test.ts
  *
- * Covers the poll-loop cursor arithmetic. The regression under test: because
- * `fetchTipEvents` treats `startLedger` as inclusive, leaving the cursor on a
- * processed ledger made every poll re-handle the same events — re-firing
- * webhooks and emails once per poll until a newer tip arrived.
+ * Covers the idle cursor policy. The regression under test: the cursor only
+ * moved when a batch contained a tip, so a quiet stretch left it pinned to the
+ * last ledger that had one and every restart re-scanned from there.
  */
 
-import { planBatch, isSaturatedLedger } from "../../indexer/cursor.js";
+import {
+  IDLE_CHECK_INTERVAL_MS,
+  isIdleCheckDue,
+  planIdleAdvance,
+} from "../../indexer/cursor.js";
 
-interface FakeEvent {
-  id: string;
+const POLL_INTERVAL_MS = 6_000;
+/** Stellar closes a ledger roughly every 5s. */
+const LEDGER_CLOSE_MS = 5_000;
+
+interface CursorWrite {
+  atMs: number;
   ledger: number;
 }
 
-const ev = (id: string, ledger: number): FakeEvent => ({ id, ledger });
-
-/**
- * Replay the poll loop against a fixed set of on-chain events and record every
- * event that got handed to `handleEvent` — i.e. every webhook/email dispatch.
- */
-function replayPolls(
-  chain: FakeEvent[],
-  polls: number,
-  { limit = 200, startLedger = 1 } = {},
-): string[] {
-  const dispatched: string[] = [];
-  let cursorLedger: number | null = null;
-
-  for (let i = 0; i < polls; i++) {
-    // Stand-in for fetchTipEvents: startLedger is inclusive, capped at `limit`.
-    const batch = chain.filter((e) => e.ledger >= startLedger).slice(0, limit);
-    if (batch.length === 0) continue;
-
-    const plan = planBatch(batch, startLedger, limit);
-    for (const e of plan.toProcess) dispatched.push(e.id);
-
-    startLedger = plan.nextStartLedger;
-    if (plan.cursorLedger !== null) cursorLedger = plan.cursorLedger;
-  }
-
-  // The stored cursor must always agree with where the loop resumes from.
-  if (cursorLedger !== null) expect(cursorLedger + 1).toBeLessThanOrEqual(startLedger);
-  return dispatched;
+interface ReplayResult {
+  writes: CursorWrite[];
+  startLedger: number;
+  persistedCursor: number;
 }
 
-describe("planBatch", () => {
-  it("leaves the cursor untouched for an empty batch", () => {
-    expect(planBatch([], 42, 200)).toEqual({
-      toProcess: [],
-      nextStartLedger: 42,
-      cursorLedger: null,
+/**
+ * Replay the poll loop through a stretch with no tip activity, recording every
+ * cursor write. Mirrors startIndexer(): read head when the idle check is due,
+ * fetch (empty), then advance.
+ */
+function replayIdlePolls(opts: {
+  polls: number;
+  startLedger: number;
+  savedCursor: number;
+  headAtStart: number;
+}): ReplayResult {
+  const writes: CursorWrite[] = [];
+  let now = 0;
+  let lastIdleCheckAt: number | null = null;
+  let startLedger = opts.startLedger;
+  let persistedCursor = opts.savedCursor;
+
+  for (let i = 0; i < opts.polls; i++) {
+    let observedHead: number | null = null;
+
+    if (isIdleCheckDue(now, lastIdleCheckAt)) {
+      lastIdleCheckAt = now;
+      observedHead = opts.headAtStart + Math.floor(now / LEDGER_CLOSE_MS);
+    }
+
+    // Batch comes back empty — the quiet period this issue is about.
+    const advance = planIdleAdvance(observedHead, startLedger, persistedCursor);
+
+    if (advance) {
+      writes.push({ atMs: now, ledger: advance.cursorLedger });
+      startLedger = advance.nextStartLedger;
+      persistedCursor = advance.cursorLedger;
+    }
+
+    now += POLL_INTERVAL_MS;
+  }
+
+  return { writes, startLedger, persistedCursor };
+}
+
+describe("isIdleCheckDue", () => {
+  it("is due on the first poll", () => {
+    expect(isIdleCheckDue(0, null)).toBe(true);
+  });
+
+  it("is not due again within the interval", () => {
+    expect(isIdleCheckDue(1_000 + POLL_INTERVAL_MS, 1_000)).toBe(false);
+  });
+
+  it("is due once the interval has elapsed", () => {
+    expect(isIdleCheckDue(1_000 + IDLE_CHECK_INTERVAL_MS, 1_000)).toBe(true);
+  });
+
+  it("accepts an interval override", () => {
+    expect(isIdleCheckDue(500, 0, 1_000)).toBe(false);
+    expect(isIdleCheckDue(1_000, 0, 1_000)).toBe(true);
+  });
+});
+
+describe("planIdleAdvance", () => {
+  it("advances past the observed head", () => {
+    expect(planIdleAdvance(900, 700, 699)).toEqual({
+      nextStartLedger: 901,
+      cursorLedger: 900,
     });
   });
 
-  it("advances past the highest ledger of a short batch", () => {
-    const events = [ev("a", 10), ev("b", 12)];
-    const plan = planBatch(events, 10, 200);
-
-    expect(plan.toProcess).toEqual(events);
-    expect(plan.nextStartLedger).toBe(13);
-    expect(plan.cursorLedger).toBe(12);
+  it("does nothing when head was not read this poll", () => {
+    expect(planIdleAdvance(null, 700, 699)).toBeNull();
   });
 
-  it("advances past a single-ledger batch instead of re-fetching it", () => {
-    const plan = planBatch([ev("a", 7), ev("b", 7)], 7, 200);
-
-    expect(plan.toProcess).toHaveLength(2);
-    expect(plan.nextStartLedger).toBe(8);
-    expect(plan.cursorLedger).toBe(7);
+  it("never moves the cursor backwards", () => {
+    // INDEXER_START_LEDGER set ahead of the chain.
+    expect(planIdleAdvance(500, 900, 0)).toBeNull();
   });
 
-  it("does not depend on the order events arrive in", () => {
-    const plan = planBatch([ev("c", 15), ev("a", 11), ev("b", 13)], 11, 200);
-
-    expect(plan.nextStartLedger).toBe(16);
-    expect(plan.cursorLedger).toBe(15);
+  it("does not rewrite a cursor that is already at head", () => {
+    expect(planIdleAdvance(900, 901, 900)).toBeNull();
   });
 
   it("keeps the cursor one behind the ledger the loop resumes from", () => {
-    const plan = planBatch([ev("a", 30)], 30, 200);
+    const advance = planIdleAdvance(900, 700, 0)!;
 
-    expect(plan.cursorLedger).toBe(plan.nextStartLedger - 1);
+    expect(advance.cursorLedger).toBe(advance.nextStartLedger - 1);
   });
 
-  describe("when the batch is full and may be truncated mid-ledger", () => {
-    const limit = 4;
-
-    it("holds back the highest ledger and re-fetches it next poll", () => {
-      const events = [ev("a", 5), ev("b", 5), ev("c", 6), ev("d", 6)];
-      const plan = planBatch(events, 5, limit);
-
-      // Ledger 6 might have a fifth event the RPC could not fit in the batch.
-      expect(plan.toProcess.map((e) => e.id)).toEqual(["a", "b"]);
-      expect(plan.nextStartLedger).toBe(6);
-      expect(plan.cursorLedger).toBe(5);
-    });
-
-    it("never skips an event that shares a ledger with a handled one", () => {
-      // Ledger 6 holds three events but only two fit in this batch.
-      const chain = [ev("a", 5), ev("b", 5), ev("c", 6), ev("d", 6), ev("e", 6)];
-      const dispatched = replayPolls(chain, 3, { limit, startLedger: 5 });
-
-      expect(dispatched.sort()).toEqual(["a", "b", "c", "d", "e"]);
-    });
-
-    it("still advances when a full batch sits entirely in one ledger", () => {
-      // Holding this back would stall the loop forever, so it must move on.
-      const events = [ev("a", 9), ev("b", 9), ev("c", 9), ev("d", 9)];
-      const plan = planBatch(events, 9, limit);
-
-      expect(plan.toProcess).toHaveLength(4);
-      expect(plan.nextStartLedger).toBe(10);
+  it("advances from a fresh install with no saved cursor", () => {
+    expect(planIdleAdvance(1_000, 1, 0)).toEqual({
+      nextStartLedger: 1_001,
+      cursorLedger: 1_000,
     });
   });
 });
 
-describe("isSaturatedLedger", () => {
-  it("flags a full batch confined to one ledger", () => {
-    expect(isSaturatedLedger([ev("a", 3), ev("b", 3)], 2)).toBe(true);
+describe("an idle indexer", () => {
+  const oneHourOfPolls = (60 * 60 * 1_000) / POLL_INTERVAL_MS;
+
+  it("advances the cursor even though no tips arrive", () => {
+    const { persistedCursor } = replayIdlePolls({
+      polls: oneHourOfPolls,
+      startLedger: 1_001,
+      savedCursor: 1_000,
+      headAtStart: 1_000,
+    });
+
+    // An hour of ledgers closed; the cursor tracked them rather than staying
+    // pinned at 1000.
+    expect(persistedCursor).toBeGreaterThan(1_000 + (60 * 60 * 1_000) / LEDGER_CLOSE_MS - 20);
   });
 
-  it("ignores a full batch spanning several ledgers", () => {
-    expect(isSaturatedLedger([ev("a", 3), ev("b", 4)], 2)).toBe(false);
+  it("throttles writes to at most one per interval", () => {
+    const { writes } = replayIdlePolls({
+      polls: oneHourOfPolls,
+      startLedger: 1_001,
+      savedCursor: 1_000,
+      headAtStart: 1_000,
+    });
+
+    // 600 polls in the hour — without throttling that is 600 writes.
+    expect(writes.length).toBeLessThanOrEqual(3_600_000 / IDLE_CHECK_INTERVAL_MS + 1);
+
+    for (let i = 1; i < writes.length; i++) {
+      expect(writes[i]!.atMs - writes[i - 1]!.atMs).toBeGreaterThanOrEqual(
+        IDLE_CHECK_INTERVAL_MS,
+      );
+    }
   });
 
-  it("ignores a short batch", () => {
-    expect(isSaturatedLedger([ev("a", 3)], 200)).toBe(false);
-  });
-});
+  it("resumes near chain head after a restart instead of re-scanning", () => {
+    const headAtStart = 1_000;
+    const idleDays = 7;
+    const polls = (idleDays * 24 * 60 * 60 * 1_000) / POLL_INTERVAL_MS;
 
-describe("consecutive polls", () => {
-  it("dispatches each tip exactly once", () => {
-    const chain = [ev("tip1", 100), ev("tip2", 100), ev("tip3", 104)];
-    const dispatched = replayPolls(chain, 5, { startLedger: 100 });
-
-    expect(dispatched).toEqual(["tip1", "tip2", "tip3"]);
-  });
-
-  it("does not re-dispatch while waiting for a newer tip", () => {
-    // The bug: polls 2..10 re-handled the tip in the latest ledger every 6s.
-    const chain = [ev("tip1", 100)];
-    const dispatched = replayPolls(chain, 10, { startLedger: 100 });
-
-    expect(dispatched).toEqual(["tip1"]);
-  });
-
-  it("does not re-dispatch tips that arrive between polls", () => {
-    const chain = [ev("tip1", 100)];
-    const first = replayPolls(chain, 3, { startLedger: 100 });
-    expect(first).toEqual(["tip1"]);
-
-    // A new tip lands two ledgers later; the earlier one must not fire again.
-    chain.push(ev("tip2", 102));
-    const second = replayPolls(chain, 3, { startLedger: 101 });
-    expect(second).toEqual(["tip2"]);
-  });
-
-  it("resumes from the stored cursor without replaying it", () => {
-    const chain = [ev("tip1", 100), ev("tip2", 101)];
-    const plan = planBatch(chain, 100, 200);
+    const { persistedCursor } = replayIdlePolls({
+      polls,
+      startLedger: headAtStart + 1,
+      savedCursor: headAtStart,
+      headAtStart,
+    });
 
     // Restart path in startIndexer(): savedCursor + 1.
-    const resumed = replayPolls(chain, 2, { startLedger: plan.cursorLedger! + 1 });
+    const resumeLedger = persistedCursor + 1;
+    const headNow = headAtStart + (idleDays * 24 * 60 * 60 * 1_000) / LEDGER_CLOSE_MS;
 
-    expect(resumed).toEqual([]);
+    // Before the fix this was headAtStart + 1 — a week of ledgers to re-scan,
+    // most of which have long since aged out of RPC event retention.
+    expect(headNow - resumeLedger).toBeLessThan(IDLE_CHECK_INTERVAL_MS / LEDGER_CLOSE_MS + 1);
+  });
+
+  it("does not write the cursor when the chain head has not moved", () => {
+    // Head frozen: planIdleAdvance must stop rewriting the same value.
+    let writes = 0;
+    let persistedCursor = 1_000;
+    let startLedger = 1_001;
+
+    for (let i = 0; i < 10; i++) {
+      const advance = planIdleAdvance(1_005, startLedger, persistedCursor);
+      if (advance) {
+        writes++;
+        startLedger = advance.nextStartLedger;
+        persistedCursor = advance.cursorLedger;
+      }
+    }
+
+    expect(writes).toBe(1);
   });
 });
