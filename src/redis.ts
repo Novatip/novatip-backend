@@ -10,7 +10,7 @@
  * await redis.set("key", "value", "EX", 60);
  */
 
-import Redis from "ioredis";
+import {Redis} from "ioredis";
 import { config } from "./config.js";
 import { logger } from "./utils/logger.js";
 
@@ -72,9 +72,25 @@ export async function cacheSet(key: string, value: unknown, ttlSeconds: number):
  * Retrieve a cached JSON value. Returns null on miss.
  */
 export async function cacheGet<T>(key: string): Promise<T | null> {
+  const fullKey = `cache:${key}`;
   const raw = await redis.get(`cache:${key}`);
   if (!raw) return null;
-  return JSON.parse(raw) as T;
+
+  try{
+    return JSON.parse(raw) as T;
+  }
+  catch(error) {
+   console.warn(`[Cache Error] Failed to parse cached JSON for key "${fullKey}". Evicting corrupted key.`, error)
+
+  };
+
+  // Deleting the corrupted key so subsequent requests repopulate it safely 
+  try {
+  await redis.del(fullKey);
+  } catch (delError) {
+    console.error(`[Cache Error] Failed to delete corrupted key "${fullKey}":`, delError);
+  }
+  return null;
 }
 
 /**
