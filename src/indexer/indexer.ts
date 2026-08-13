@@ -26,11 +26,15 @@ import {
   type TipEvent,
 } from "@novatip/sdk";
 import { config } from "../config.js";
-import { isIdleCheckDue, planIdleAdvance } from "./cursor.js";
+import {
+  isIdleCheckDue,
+  isSaturatedLedger,
+  planBatch,
+  planIdleAdvance,
+} from "./cursor.js";
 import { fetchLatestLedger } from "./rpc.js";
 import { logger } from "../utils/logger.js";
-import { planBatch, isSaturatedLedger } from "./cursor.js";
-import { persistTip, updateCursor, readCursor } from "./persist.ts";
+import { persistTip, updateCursor, readCursor } from "./persist.js";
 import { dispatchWebhooks } from "../modules/webhooks/webhooks.service.js";
 import { sendTipNotification } from "../modules/notifications/email.service.js";
 
@@ -84,7 +88,6 @@ export async function startIndexer(): Promise<void> {
   let persistedCursor  = savedCursor;
   let lastIdleCheckAt: number | null = null;
 
-  console.info(`[indexer] resuming from ledger ${startLedger}`);
   indexerLogger.info({ startLedger }, "resuming from ledger");
 
   while (running) {
@@ -101,7 +104,7 @@ export async function startIndexer(): Promise<void> {
           observedHead = await fetchLatestLedger(config.stellar.rpcUrl);
         } catch (err) {
           // Cursor freshness is an optimisation — never let it stop indexing.
-          console.warn("[indexer] could not read chain head:", err);
+          indexerLogger.warn({ err }, "could not read chain head");
         }
       }
 
@@ -118,8 +121,9 @@ export async function startIndexer(): Promise<void> {
           "processing events",
         );
         if (isSaturatedLedger(events, POLL_LIMIT)) {
-          console.warn(
-            `[indexer] ledger ${events[0]!.ledger} returned a full batch of ${POLL_LIMIT} event(s) — any beyond that are unreachable`,
+          indexerLogger.warn(
+            { ledger: events[0]!.ledger, limit: POLL_LIMIT },
+            "ledger returned a full batch — any events beyond the limit are unreachable",
           );
         }
 
@@ -129,31 +133,32 @@ export async function startIndexer(): Promise<void> {
           POLL_LIMIT,
         );
 
-        console.info(`[indexer] processing ${toProcess.length} event(s) from ledger ${startLedger}`);
-
         for (const event of toProcess) {
           await handleEvent(event);
         }
 
-        await updateCursor(startLedger);
-        persistedCursor = startLedger;
-      } else {
-        // No tips in this range — advance to chain head so an idle stretch
-        // doesn't turn into a backfill on the next restart.
-        const advance = planIdleAdvance(observedHead, startLedger, persistedCursor);
-
-        if (advance) {
-          console.info(`[indexer] idle — advancing cursor to ledger ${advance.cursorLedger}`);
-
-          await updateCursor(advance.cursorLedger);
-          startLedger     = advance.nextStartLedger;
-          persistedCursor = advance.cursorLedger;
         // Advance past the ledgers just handled — startLedger is inclusive, so
         // leaving it on a processed ledger re-runs webhooks and emails.
         startLedger = nextStartLedger;
 
         if (cursorLedger !== null) {
           await updateCursor(cursorLedger);
+          persistedCursor = cursorLedger;
+        }
+      } else {
+        // No tips in this range — advance to chain head so an idle stretch
+        // doesn't turn into a backfill on the next restart.
+        const advance = planIdleAdvance(observedHead, startLedger, persistedCursor);
+
+        if (advance) {
+          indexerLogger.info(
+            { cursorLedger: advance.cursorLedger },
+            "idle — advancing cursor to chain head",
+          );
+
+          await updateCursor(advance.cursorLedger);
+          startLedger     = advance.nextStartLedger;
+          persistedCursor = advance.cursorLedger;
         }
       }
     } catch (err) {

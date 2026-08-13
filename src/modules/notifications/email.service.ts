@@ -11,6 +11,9 @@ import type { TipEvent } from "@novatip/sdk";
 import { formatUsdc } from "@novatip/sdk";
 import { db } from "../../db.js";
 import { config } from "../../config.js";
+import { logger } from "../../utils/logger.js";
+
+const emailLogger = logger.child({ component: "notifications" });
 
 /**
  * Send a tip-received email notification to the creator.
@@ -32,8 +35,9 @@ export async function sendTipNotification(event: TipEvent): Promise<void> {
   const recipients: string[] = [];
 
   if (recipients.length === 0) {
-    console.warn(
-      `[notifications] no email on record for creator ${creator.slug} — skipping tip notification`,
+    emailLogger.warn(
+      { slug: creator.slug },
+      "no email on record for creator — skipping tip notification",
     );
     return;
   }
@@ -66,7 +70,7 @@ export async function sendTipNotification(event: TipEvent): Promise<void> {
     });
 
     if (error) {
-      console.error("[notifications] Resend rejected the email:", error);
+      emailLogger.error({ err: error }, "Resend rejected the email");
       return;
     }
 
@@ -86,6 +90,6 @@ export async function sendTipNotification(event: TipEvent): Promise<void> {
       },
     });
   } catch (err) {
-    console.error("[notifications] failed to send email:", err);
+    emailLogger.error({ err }, "failed to send email");
   }
 }
