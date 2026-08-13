@@ -15,13 +15,16 @@ import { disconnectDb } from "./db.js";
 import { disconnectRedis, redis } from "./redis.js";
 
 export async function buildServer(): Promise<FastifyInstance> {
+  const isProduction = config.nodeEnv === "production";
+
   const server = Fastify({
     logger: {
-      level: config.nodeEnv === "production" ? "info" : "debug",
-      transport:
-        config.nodeEnv !== "production"
-          ? { target: "pino-pretty", options: { colorize: true } }
-          : undefined,
+      level: isProduction ? "info" : "debug",
+      // Spread rather than an explicit undefined — see the note in
+      // utils/logger.ts about exactOptionalPropertyTypes.
+      ...(isProduction
+        ? {}
+        : { transport: { target: "pino-pretty", options: { colorize: true } } }),
     },
   });
 

@@ -35,21 +35,25 @@ export interface PublicCreator {
   createdAt:   Date;
 }
 
+// The `| undefined` on each optional field is deliberate. The tsconfig enables
+// exactOptionalPropertyTypes, and these are built by spreading a parsed zod
+// body whose absent fields are present-but-undefined — so the properties have
+// to admit undefined explicitly, not merely be optional.
 export interface ClaimSlugInput {
   creatorId: string;
   slug: string;
   /** On-chain jar ID — must match slug, e.g. "@alice" */
   jarId: string;
-  displayName?: string;
-  bio?: string;
-  splits?: Array<{ to: string; bps: number }>;
+  displayName?: string | undefined;
+  bio?: string | undefined;
+  splits?: Array<{ to: string; bps: number }> | undefined;
 }
 
 export interface UpdateProfileInput {
   creatorId: string;
-  displayName?: string;
-  bio?: string;
-  avatarUrl?: string;
+  displayName?: string | undefined;
+  bio?: string | undefined;
+  avatarUrl?: string | undefined;
 }
 
 // ── Slug claim ────────────────────────────────────────────────────────────────
@@ -74,12 +78,15 @@ export async function claimSlug(input: ClaimSlugInput) {
 
   const creator = await db.creator.update({
     where: { id: input.creatorId },
+    // Optional fields are spread in only when supplied. Prisma reads a missing
+    // key as "leave unchanged", but exactOptionalPropertyTypes rejects passing
+    // an explicit undefined to say the same thing.
     data: {
-      slug:        input.slug,
-      jarId:       input.jarId,
-      displayName: input.displayName,
-      bio:         input.bio,
-      splits:      input.splits ?? [],
+      slug:   input.slug,
+      jarId:  input.jarId,
+      splits: input.splits ?? [],
+      ...(input.displayName !== undefined && { displayName: input.displayName }),
+      ...(input.bio !== undefined && { bio: input.bio }),
     },
   });
 
@@ -126,10 +133,11 @@ export async function getCreatorBySlug(slug: string): Promise<PublicCreator> {
 export async function updateProfile(input: UpdateProfileInput) {
   const creator = await db.creator.update({
     where: { id: input.creatorId },
+    // See the note in claimSlug: absent key, not an explicit undefined.
     data: {
-      displayName: input.displayName,
-      bio:         input.bio,
-      avatarUrl:   input.avatarUrl,
+      ...(input.displayName !== undefined && { displayName: input.displayName }),
+      ...(input.bio !== undefined && { bio: input.bio }),
+      ...(input.avatarUrl !== undefined && { avatarUrl: input.avatarUrl }),
     },
   });
 

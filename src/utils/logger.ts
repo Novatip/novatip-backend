@@ -4,10 +4,14 @@
  */
 import pino from "pino";
 
+const isProduction = process.env["NODE_ENV"] === "production";
+
+// `transport` is spread in rather than set to undefined: the tsconfig enables
+// exactOptionalPropertyTypes, under which an explicit `undefined` is not a
+// valid value for an optional property — the key has to be absent instead.
 export const logger = pino({
-  level: process.env["NODE_ENV"] === "production" ? "info" : "debug",
-  transport:
-    process.env["NODE_ENV"] !== "production"
-      ? { target: "pino-pretty", options: { colorize: true } }
-      : undefined,
+  level: isProduction ? "info" : "debug",
+  ...(isProduction
+    ? {}
+    : { transport: { target: "pino-pretty", options: { colorize: true } } }),
 });

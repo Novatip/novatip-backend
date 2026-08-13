@@ -101,12 +101,15 @@ async function deliver(
 
   // Record delivery attempt
   await db.webhookDelivery.create({
+    // statusCode and response are nullable columns: a request that timed out or
+    // failed to connect genuinely has neither, and NULL records that honestly.
+    // An explicit undefined is also rejected under exactOptionalPropertyTypes.
     data: {
       webhookId:  webhook.id,
-      statusCode,
+      statusCode: statusCode ?? null,
       success,
       payload:    payload as object,
-      response:   responseText,
+      response:   responseText ?? null,
     },
   });
 

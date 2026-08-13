@@ -10,7 +10,10 @@
  * await redis.set("key", "value", "EX", 60);
  */
 
-import {Redis} from "ioredis";
+// Named import rather than default: ioredis is CJS, and under this project's
+// ESM + NodeNext resolution the default export is the module namespace, which
+// is not constructable.
+import { Redis } from "ioredis";
 import { config } from "./config.js";
 import { logger } from "./utils/logger.js";
 
