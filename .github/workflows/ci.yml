@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    name: Lint · Typecheck · Test · Build
+    runs-on: ubuntu-latest
+
+    steps:
+      # @novatip/sdk is resolved as `file:../novatip-sdk`, so the SDK has to sit
+      # beside this repo in the workspace and be built before npm can link it.
+      - name: Checkout backend
+        uses: actions/checkout@v4
+        with:
+          path: novatip-backend
+
+      - name: Checkout sdk
+        uses: actions/checkout@v4
+        with:
+          repository: Novatip/novatip-sdk
+          ref: main
+          path: novatip-sdk
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            novatip-backend/package-lock.json
+            novatip-sdk/package-lock.json
+
+      # dist/ is what the backend actually imports — an unbuilt SDK fails at
+      # typecheck with "cannot find module" rather than anything informative.
+      - name: Build sdk
+        working-directory: novatip-sdk
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install dependencies
+        working-directory: novatip-backend
+        run: npm ci
+
+      - name: Generate Prisma client
+        working-directory: novatip-backend
+        run: npx prisma generate
+
+      - name: Lint
+        working-directory: novatip-backend
+        run: npm run lint
+
+      - name: Typecheck
+        working-directory: novatip-backend
+        run: npm run typecheck
+
+      - name: Test
+        working-directory: novatip-backend
+        run: npm test
+
+      - name: Build
+        working-directory: novatip-backend
+        run: npm run build

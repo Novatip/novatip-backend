@@ -17,7 +17,8 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "db:seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
     "@fastify/cors": "^9.0.1",
@@ -55,5 +56,8 @@
   },
   "engines": {
     "node": ">=18"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
   }
 }
