@@ -183,8 +183,11 @@ export function stopIndexer(): void {
 // ── Event handler ─────────────────────────────────────────────────────────────
 
 async function handleEvent(event: TipEvent): Promise<void> {
-  // Use jarId + ledger as a synthetic txHash when a real hash isn't available
-  const txHash = `${event.jarId}:${event.ledger}:${event.from}`;
+  // The real transaction hash, carried through from the RPC. This used to be
+  // synthesised as `jarId:ledger:from`, under which two tips from the same
+  // sender to the same jar in one ledger produced identical keys — the upsert
+  // in persistTip then treated the second as a duplicate and dropped it.
+  const txHash = event.txHash;
 
   try {
     await persistTip(event, txHash);
