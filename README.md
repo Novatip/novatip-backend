@@ -69,6 +69,12 @@ GET /analytics/timeseries    - Daily breakdown ?days=30 (JWT)
 GET /analytics/top-supporters- Ranked supporters ?limit=10 (JWT)
 GET /analytics/recent        - Live tip feed ?limit=20 (JWT)
 
+/analytics/timeseries always returns exactly `days` points, oldest first, one
+per UTC calendar day (00:00–23:59:59 UTC) up to and including today. Days
+with no tips are included with tipCount: 0 and amountRaw: "0" rather than
+omitted, so charts can plot the series directly without gap-filling. Day
+boundaries are UTC, not the requesting client's local time zone.
+
 GET    /webhooks             - List webhooks (JWT)
 POST   /webhooks             - Register webhook (JWT)
 DELETE /webhooks/:id         - Remove webhook (JWT)
