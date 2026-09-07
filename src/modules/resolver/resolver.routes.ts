@@ -27,7 +27,7 @@ export const resolverRoutes: FastifyPluginAsync = async (app) => {
 
     return reply.send({
       creator,
-      tipUrl:   `${config.appBaseUrl}/@${slug}`,
+      tipUrl:   `${config.appBaseUrl}/${slug}`,
       qrSvgUrl: `/api/v1/qr/${slug}`,
       qrPngUrl: `/api/v1/qr/${slug}/png`,
     });
