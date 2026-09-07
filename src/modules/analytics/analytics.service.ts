@@ -35,31 +35,52 @@ export interface TopSupporter {
 
 // ── Totals ────────────────────────────────────────────────────────────────────
 
+interface TotalsRow {
+  totalTips: bigint;
+  totalAmountRaw: string | null;
+  uniqueSupporters: bigint;
+}
+
 /**
  * Total tip count, total USDC received (stroops), and unique supporter count.
+ *
+ * amount is stored as a String to preserve i128 precision, so the sum is
+ * computed by casting to numeric in SQL rather than in JS — this both
+ * avoids loading every row and keeps full precision (Postgres numeric is
+ * arbitrary-precision, unlike a JS number).
  */
 export async function getTotals(creatorId: string): Promise<TipTotals> {
   const key = `analytics:totals:${creatorId}`;
   const cached = await cacheGet<TipTotals>(key);
   if (cached) return cached;
 
-  const tips = await db.tip.findMany({
-    where: { creatorId },
-    select: { amount: true, fromAddress: true },
-  });
+  const rows = await db.$queryRaw<TotalsRow[]>`
+    SELECT
+      COUNT(*)                                AS "totalTips",
+      COALESCE(SUM(amount::numeric), 0)::text AS "totalAmountRaw",
+      COUNT(DISTINCT "fromAddress")            AS "uniqueSupporters"
+    FROM "Tip"
+    WHERE "creatorId" = ${creatorId}
+  `;
+  const row = rows[0];
 
-  const totalTips      = tips.length;
-  const totalAmountRaw = tips
-    .reduce((sum, t) => sum + BigInt(t.amount), 0n)
-    .toString();
-  const uniqueSupporters = new Set(tips.map((t) => t.fromAddress)).size;
+  const result: TipTotals = {
+    totalTips:        Number(row?.totalTips ?? 0n),
+    totalAmountRaw:   row?.totalAmountRaw ?? "0",
+    uniqueSupporters: Number(row?.uniqueSupporters ?? 0n),
+  };
 
-  const result: TipTotals = { totalTips, totalAmountRaw, uniqueSupporters };
   await cacheSet(key, result, CACHE_TTL);
   return result;
 }
 
 // ── Time series ───────────────────────────────────────────────────────────────
+
+interface TimeSeriesRow {
+  date:      Date;
+  tipCount:  bigint;
+  amountRaw: string;
+}
 
 /**
  * Daily tip counts and amounts over the last N days.
@@ -76,36 +97,34 @@ export async function getTimeSeries(
   const since = new Date();
   since.setDate(since.getDate() - days);
 
-  const tips = await db.tip.findMany({
-    where:   { creatorId, ledgerAt: { gte: since } },
-    select:  { ledgerAt: true, amount: true },
-    orderBy: { ledgerAt: "asc" },
-  });
+  const rows = await db.$queryRaw<TimeSeriesRow[]>`
+    SELECT
+      date_trunc('day', "ledgerAt") AS "date",
+      COUNT(*)                      AS "tipCount",
+      SUM(amount::numeric)::text    AS "amountRaw"
+    FROM "Tip"
+    WHERE "creatorId" = ${creatorId} AND "ledgerAt" >= ${since}
+    GROUP BY date_trunc('day', "ledgerAt")
+    ORDER BY date_trunc('day', "ledgerAt") ASC
+  `;
 
-  // Group by date
-  const byDate = new Map<string, { count: number; amount: bigint }>();
-  for (const tip of tips) {
-    const date = tip.ledgerAt.toISOString().slice(0, 10) as string;
-    const existing = byDate.get(date) ?? { count: 0, amount: 0n };
-    byDate.set(date, {
-      count:  existing.count + 1,
-      amount: existing.amount + BigInt(tip.amount),
-    });
-  }
-
-  const result: TimeSeriesPoint[] = Array.from(byDate.entries()).map(
-    ([date, { count, amount }]) => ({
-      date,
-      tipCount:  count,
-      amountRaw: amount.toString(),
-    }),
-  );
+  const result: TimeSeriesPoint[] = rows.map((row) => ({
+    date:      row.date.toISOString().slice(0, 10),
+    tipCount:  Number(row.tipCount),
+    amountRaw: row.amountRaw,
+  }));
 
   await cacheSet(key, result, CACHE_TTL);
   return result;
 }
 
 // ── Top supporters ────────────────────────────────────────────────────────────
+
+interface TopSupporterRow {
+  fromAddress:    string;
+  tipCount:       bigint;
+  totalAmountRaw: string;
+}
 
 /**
  * Top N supporters ranked by total amount sent.
@@ -119,32 +138,23 @@ export async function getTopSupporters(
   const cached = await cacheGet<TopSupporter[]>(key);
   if (cached) return cached;
 
-  const tips = await db.tip.findMany({
-    where:  { creatorId },
-    select: { fromAddress: true, amount: true },
-  });
+  const rows = await db.$queryRaw<TopSupporterRow[]>`
+    SELECT
+      "fromAddress",
+      COUNT(*)                   AS "tipCount",
+      SUM(amount::numeric)::text AS "totalAmountRaw"
+    FROM "Tip"
+    WHERE "creatorId" = ${creatorId}
+    GROUP BY "fromAddress"
+    ORDER BY SUM(amount::numeric) DESC
+    LIMIT ${limit}
+  `;
 
-  // Aggregate by sender
-  const byAddress = new Map<string, { count: number; amount: bigint }>();
-  for (const tip of tips) {
-    const existing = byAddress.get(tip.fromAddress) ?? { count: 0, amount: 0n };
-    byAddress.set(tip.fromAddress, {
-      count:  existing.count + 1,
-      amount: existing.amount + BigInt(tip.amount),
-    });
-  }
-
-  const result: TopSupporter[] = Array.from(byAddress.entries())
-    .map(([fromAddress, { count, amount }]) => ({
-      fromAddress,
-      tipCount:       count,
-      totalAmountRaw: amount.toString(),
-    }))
-    .sort((a, b) => {
-      const diff = BigInt(b.totalAmountRaw) - BigInt(a.totalAmountRaw);
-      return diff > 0n ? 1 : diff < 0n ? -1 : 0;
-    })
-    .slice(0, limit);
+  const result: TopSupporter[] = rows.map((row) => ({
+    fromAddress:    row.fromAddress,
+    tipCount:       Number(row.tipCount),
+    totalAmountRaw: row.totalAmountRaw,
+  }));
 
   await cacheSet(key, result, CACHE_TTL);
   return result;
