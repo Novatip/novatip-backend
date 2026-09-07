@@ -17,7 +17,6 @@ const ChallengeBody = z.object({
 const VerifyBody = z.object({
   walletAddress: z.string().min(56).max(56),
   signatureHex:  z.string().length(128),   // 64-byte sig → 128 hex chars
-  publicKeyHex:  z.string().length(64),    // 32-byte key → 64 hex chars
 });
 
 export const authRoutes: FastifyPluginAsync = async (app) => {
@@ -42,7 +41,6 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     const { jwt, isNewUser } = await verifyChallenge(
       body.data.walletAddress,
       body.data.signatureHex,
-      body.data.publicKeyHex,
       (payload) => app.jwt.sign(payload),
     );
 

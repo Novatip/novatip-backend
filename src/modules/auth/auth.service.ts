@@ -9,11 +9,13 @@
  *   3. Client calls POST /auth/verify     → receives a JWT on success
  *
  * Signature verification uses TweetNaCl (Ed25519) — the same curve
- * Stellar keypairs use — so no Stellar SDK dependency is needed here.
+ * Stellar keypairs use. The Stellar SDK is only used to decode the walletAddress
+ * strkey into its raw public key bytes.
  */
 
 import nacl from "tweetnacl";
 import { randomBytes } from "crypto";
+import { StrKey } from "@stellar/stellar-sdk";
 import { setAuthNonce, consumeAuthNonce } from "../../redis.js";
 import { db } from "../../db.js";
 import { isValidAccountId } from "@novatip/sdk";
@@ -46,12 +48,10 @@ export interface VerifyResult {
  *
  * @param walletAddress - G... Stellar account address
  * @param signatureHex  - Hex-encoded Ed25519 signature over the nonce bytes
- * @param publicKeyHex  - Hex-encoded 32-byte Ed25519 public key matching the address
  */
 export async function verifyChallenge(
   walletAddress: string,
   signatureHex: string,
-  publicKeyHex: string,
   signJwt: (payload: object) => string,
 ): Promise<VerifyResult> {
   if (!isValidAccountId(walletAddress)) {
@@ -67,8 +67,13 @@ export async function verifyChallenge(
     );
   }
 
+  // The public key is derived from walletAddress itself rather than taken from
+  // the client, so there is no separate value that could name a different key
+  // than the one the signature is checked against.
+  const publicKey = StrKey.decodeEd25519PublicKey(walletAddress);
+
   // Verify Ed25519 signature
-  const valid = verifyEd25519(nonce, signatureHex, publicKeyHex);
+  const valid = verifyEd25519(nonce, signatureHex, publicKey);
   if (!valid) {
     throw Object.assign(new Error("Signature verification failed."), { statusCode: 401 });
   }
@@ -108,12 +113,11 @@ export async function verifyChallenge(
 function verifyEd25519(
   nonce: string,
   signatureHex: string,
-  publicKeyHex: string,
+  publicKey: Buffer,
 ): boolean {
   try {
     const message   = Buffer.from(nonce, "utf8");
     const signature = Buffer.from(signatureHex, "hex");
-    const publicKey = Buffer.from(publicKeyHex, "hex");
 
     if (publicKey.length !== 32) return false;
     if (signature.length !== 64) return false;
