@@ -18,11 +18,11 @@ const CreateBody = z.object({
 });
 
 export const webhookRoutes: FastifyPluginAsync = async (app) => {
-  app.addHook("onRequest", (app as any).authenticate);
+  app.addHook("onRequest", app.authenticate);
 
   // ── GET / ──────────────────────────────────────────────────────────────────
   app.get("/", async (request, reply) => {
-    const user = (request as any).user as { sub: string };
+    const { user } = request;
     const webhooks = await listWebhooks(user.sub);
     return reply.send({ webhooks });
   });
@@ -34,7 +34,7 @@ export const webhookRoutes: FastifyPluginAsync = async (app) => {
       return reply.status(400).send({ error: body.error.flatten() });
     }
 
-    const user   = (request as any).user as { sub: string };
+    const { user } = request;
     const secret = body.data.secret ?? randomBytes(24).toString("hex");
     const webhook = await createWebhook(user.sub, body.data.url, secret);
 
@@ -44,7 +44,7 @@ export const webhookRoutes: FastifyPluginAsync = async (app) => {
 
   // ── DELETE /:id ────────────────────────────────────────────────────────────
   app.delete("/:id", async (request, reply) => {
-    const user = (request as any).user as { sub: string };
+    const { user } = request;
     const { id } = request.params as { id: string };
     await deleteWebhook(user.sub, id);
     return reply.status(204).send();

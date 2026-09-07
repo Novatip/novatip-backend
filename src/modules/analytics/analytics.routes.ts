@@ -24,18 +24,18 @@ const LimitQuery = z.coerce.number().int().min(1).max(100).default(10);
 
 export const analyticsRoutes: FastifyPluginAsync = async (app) => {
   // All analytics routes require a valid JWT
-  app.addHook("onRequest", (app as any).authenticate);
+  app.addHook("onRequest", app.authenticate);
 
   // ── GET /totals ────────────────────────────────────────────────────────────
   app.get("/totals", async (request, reply) => {
-    const user = (request as any).user as { sub: string };
+    const { user } = request;
     const totals = await getTotals(user.sub);
     return reply.send(totals);
   });
 
   // ── GET /timeseries ────────────────────────────────────────────────────────
   app.get("/timeseries", async (request, reply) => {
-    const user  = (request as any).user as { sub: string };
+    const { user } = request;
     const query = request.query as Record<string, string>;
     const days  = DaysQuery.parse(query["days"]);
     const series = await getTimeSeries(user.sub, days);
@@ -44,7 +44,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
 
   // ── GET /top-supporters ────────────────────────────────────────────────────
   app.get("/top-supporters", async (request, reply) => {
-    const user  = (request as any).user as { sub: string };
+    const { user } = request;
     const query = request.query as Record<string, string>;
     const limit = LimitQuery.parse(query["limit"]);
     const supporters = await getTopSupporters(user.sub, limit);
@@ -53,7 +53,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
 
   // ── GET /recent ────────────────────────────────────────────────────────────
   app.get("/recent", async (request, reply) => {
-    const user  = (request as any).user as { sub: string };
+    const { user } = request;
     const query = request.query as Record<string, string>;
     const limit = LimitQuery.parse(query["limit"] ?? "20");
     const tips  = await getRecentTips(user.sub, limit);

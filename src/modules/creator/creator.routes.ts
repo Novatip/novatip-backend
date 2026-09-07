@@ -56,14 +56,14 @@ export const creatorRoutes: FastifyPluginAsync = async (app) => {
   // ── POST /claim — auth required ────────────────────────────────────────────
   app.post(
     "/claim",
-    { onRequest: [(app as any).authenticate] },
+    { onRequest: [app.authenticate] },
     async (request, reply) => {
       const body = ClaimBody.safeParse(request.body);
       if (!body.success) {
         return reply.status(400).send({ error: body.error.flatten() });
       }
 
-      const user = (request as any).user as { sub: string };
+      const { user } = request;
       const creator = await claimSlug({ creatorId: user.sub, ...body.data });
       return reply.status(201).send({ creator });
     },
@@ -72,14 +72,14 @@ export const creatorRoutes: FastifyPluginAsync = async (app) => {
   // ── PATCH /me — auth required ──────────────────────────────────────────────
   app.patch(
     "/me",
-    { onRequest: [(app as any).authenticate] },
+    { onRequest: [app.authenticate] },
     async (request, reply) => {
       const body = UpdateProfileBody.safeParse(request.body);
       if (!body.success) {
         return reply.status(400).send({ error: body.error.flatten() });
       }
 
-      const user = (request as any).user as { sub: string };
+      const { user } = request;
       const creator = await updateProfile({ creatorId: user.sub, ...body.data });
       return reply.send({ creator });
     },
@@ -88,14 +88,14 @@ export const creatorRoutes: FastifyPluginAsync = async (app) => {
   // ── PATCH /me/splits — auth required ──────────────────────────────────────
   app.patch(
     "/me/splits",
-    { onRequest: [(app as any).authenticate] },
+    { onRequest: [app.authenticate] },
     async (request, reply) => {
       const body = UpdateSplitsBody.safeParse(request.body);
       if (!body.success) {
         return reply.status(400).send({ error: body.error.flatten() });
       }
 
-      const user = (request as any).user as { sub: string };
+      const { user } = request;
       const creator = await updateCreatorSplits(user.sub, body.data.splits);
       return reply.send({ creator });
     },
