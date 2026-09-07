@@ -17,6 +17,38 @@ import { cacheInvalidate, cacheGet, cacheSet } from "../../redis.js";
 const SLUG_REGEX = /^[a-z0-9_-]{3,32}$/;
 const PROFILE_CACHE_TTL = 60; // seconds
 
+/**
+ * Slugs that can't be claimed by a creator.
+ *
+ * novatip-web serves creator pages from src/app/[slug]/page.tsx, at the same
+ * routing level as static routes like /dashboard and /onboarding. Next.js
+ * resolves static segments before dynamic ones, so a creator claiming one of
+ * those slugs would get a page permanently shadowed by the app's own route.
+ * api and _next are reserved for the same routing reason; admin/support/etc
+ * are reserved to prevent impersonation.
+ *
+ * Exported as a single constant so claimSlug and isSlugAvailable can't drift
+ * apart on what's reserved.
+ */
+export const RESERVED_SLUGS: ReadonlySet<string> = new Set([
+  "api",
+  "admin",
+  "dashboard",
+  "onboarding",
+  "settings",
+  "login",
+  "logout",
+  "auth",
+  "support",
+  "help",
+  "about",
+  "terms",
+  "privacy",
+  "static",
+  "_next",
+  "novatip",
+]);
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 /**
@@ -66,6 +98,13 @@ export async function claimSlug(input: ClaimSlugInput) {
   if (!SLUG_REGEX.test(input.slug)) {
     throw Object.assign(
       new Error("Slug must be 3–32 characters: lowercase letters, numbers, hyphens, underscores."),
+      { statusCode: 400 },
+    );
+  }
+
+  if (RESERVED_SLUGS.has(input.slug)) {
+    throw Object.assign(
+      new Error(`"${input.slug}" is a reserved slug and can't be claimed.`),
       { statusCode: 400 },
     );
   }
@@ -167,6 +206,7 @@ export async function updateCreatorSplits(
  */
 export async function isSlugAvailable(slug: string): Promise<boolean> {
   if (!SLUG_REGEX.test(slug)) return false;
+  if (RESERVED_SLUGS.has(slug)) return false;
   const existing = await db.creator.findUnique({ where: { slug } });
   return !existing;
 }
