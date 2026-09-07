@@ -60,6 +60,12 @@ unavailable by /creators/check/:slug. Run `npm run check:reserved-slugs`
 against a given environment to find existing creators who already hold one
 of these slugs from before the list existed.
 
+POST /creators/claim returns 409 when the slug or jarId is already taken,
+including when two requests race for the same one — the database's unique
+constraint is the real guard, not just the pre-check. The response body's
+error.code is "SLUG_TAKEN" or "JARID_TAKEN" so callers can tell which
+field conflicted.
+
 GET /qr/:slug                - QR code SVG
 GET /qr/:slug/png            - QR code PNG download
 GET /resolve/:slug           - Full tip-page data
