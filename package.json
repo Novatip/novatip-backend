@@ -18,7 +18,8 @@
     "db:migrate": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio",
-    "db:seed": "tsx prisma/seed.ts"
+    "db:seed": "tsx prisma/seed.ts",
+    "check:reserved-slugs": "tsx scripts/check-reserved-slugs.ts"
   },
   "dependencies": {
     "@fastify/cors": "^9.0.1",

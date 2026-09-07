@@ -53,6 +53,13 @@ POST   /creators/claim       - Claim a slug (JWT)
 PATCH  /creators/me          - Update profile (JWT)
 PATCH  /creators/me/splits   - Update splits (JWT)
 
+Reserved slugs (api, admin, dashboard, onboarding, settings, login, logout,
+auth, support, help, about, terms, privacy, static, _next, novatip — see
+RESERVED_SLUGS in creator.service.ts) can't be claimed and are reported as
+unavailable by /creators/check/:slug. Run `npm run check:reserved-slugs`
+against a given environment to find existing creators who already hold one
+of these slugs from before the list existed.
+
 GET /qr/:slug                - QR code SVG
 GET /qr/:slug/png            - QR code PNG download
 GET /resolve/:slug           - Full tip-page data
@@ -156,6 +163,7 @@ npm run db:generate       - regenerate Prisma client
 npm run db:migrate        - apply migrations (dev)
 npm run db:migrate:deploy - apply migrations (production)
 npm run db:studio         - open Prisma Studio
+npm run check:reserved-slugs - report existing creators holding a reserved slug
 
 ## License
 
