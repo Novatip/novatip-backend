@@ -10,12 +10,44 @@
  *      backend just records the claimed slug + jarId)
  */
 
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { db } from "../../db.js";
 import { cacheInvalidate, cacheGet, cacheSet } from "../../redis.js";
 
 const SLUG_REGEX = /^[a-z0-9_-]{3,32}$/;
 const PROFILE_CACHE_TTL = 60; // seconds
+
+/**
+ * Slugs that can't be claimed by a creator.
+ *
+ * novatip-web serves creator pages from src/app/[slug]/page.tsx, at the same
+ * routing level as static routes like /dashboard and /onboarding. Next.js
+ * resolves static segments before dynamic ones, so a creator claiming one of
+ * those slugs would get a page permanently shadowed by the app's own route.
+ * api and _next are reserved for the same routing reason; admin/support/etc
+ * are reserved to prevent impersonation.
+ *
+ * Exported as a single constant so claimSlug and isSlugAvailable can't drift
+ * apart on what's reserved.
+ */
+export const RESERVED_SLUGS: ReadonlySet<string> = new Set([
+  "api",
+  "admin",
+  "dashboard",
+  "onboarding",
+  "settings",
+  "login",
+  "logout",
+  "auth",
+  "support",
+  "help",
+  "about",
+  "terms",
+  "privacy",
+  "static",
+  "_next",
+  "novatip",
+]);
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -70,28 +102,70 @@ export async function claimSlug(input: ClaimSlugInput) {
     );
   }
 
-  // Check availability
-  const existing = await db.creator.findUnique({ where: { slug: input.slug } });
-  if (existing && existing.id !== input.creatorId) {
-    throw Object.assign(new Error("This slug is already taken."), { statusCode: 409 });
+  if (RESERVED_SLUGS.has(input.slug)) {
+    throw Object.assign(
+      new Error(`"${input.slug}" is a reserved slug and can't be claimed.`),
+      { statusCode: 400 },
+    );
   }
 
-  const creator = await db.creator.update({
-    where: { id: input.creatorId },
-    // Optional fields are spread in only when supplied. Prisma reads a missing
-    // key as "leave unchanged", but exactOptionalPropertyTypes rejects passing
-    // an explicit undefined to say the same thing.
-    data: {
-      slug:   input.slug,
-      jarId:  input.jarId,
-      splits: input.splits ?? [],
-      ...(input.displayName !== undefined && { displayName: input.displayName }),
-      ...(input.bio !== undefined && { bio: input.bio }),
-    },
-  });
+  // Check availability. This pre-check handles the common case, but two
+  // requests can race and both pass it before either writes — the unique
+  // constraint below is what actually prevents a duplicate.
+  const existing = await db.creator.findUnique({ where: { slug: input.slug } });
+  if (existing && existing.id !== input.creatorId) {
+    throw Object.assign(new Error("This slug is already taken."), {
+      statusCode: 409,
+      code: "SLUG_TAKEN",
+    });
+  }
+
+  let creator;
+  try {
+    creator = await db.creator.update({
+      where: { id: input.creatorId },
+      // Optional fields are spread in only when supplied. Prisma reads a missing
+      // key as "leave unchanged", but exactOptionalPropertyTypes rejects passing
+      // an explicit undefined to say the same thing.
+      data: {
+        slug:   input.slug,
+        jarId:  input.jarId,
+        splits: input.splits ?? [],
+        ...(input.displayName !== undefined && { displayName: input.displayName }),
+        ...(input.bio !== undefined && { bio: input.bio }),
+      },
+    });
+  } catch (err) {
+    throw toClaimConflict(err);
+  }
 
   await cacheInvalidate(`creator:${input.slug}`);
   return creator;
+}
+
+/**
+ * A losing concurrent claim hits the DB's unique constraint (slug and jarId
+ * are both @unique) as Prisma error P2002, not the pre-check above. That
+ * reaches the global error handler with no statusCode and surfaces as a 500
+ * — this rethrows it as the same 409 the pre-check produces, using
+ * err.meta.target to say which column conflicted.
+ */
+function toClaimConflict(err: unknown): unknown {
+  if (!(err instanceof Prisma.PrismaClientKnownRequestError) || err.code !== "P2002") {
+    return err;
+  }
+
+  const target = err.meta?.["target"];
+  const conflictsOnJarId = Array.isArray(target) && target.includes("jarId");
+
+  return Object.assign(
+    new Error(
+      conflictsOnJarId
+        ? "This jarId is already registered to another creator."
+        : "This slug is already taken.",
+    ),
+    { statusCode: 409, code: conflictsOnJarId ? "JARID_TAKEN" : "SLUG_TAKEN" },
+  );
 }
 
 // ── Profile ───────────────────────────────────────────────────────────────────
@@ -167,6 +241,7 @@ export async function updateCreatorSplits(
  */
 export async function isSlugAvailable(slug: string): Promise<boolean> {
   if (!SLUG_REGEX.test(slug)) return false;
+  if (RESERVED_SLUGS.has(slug)) return false;
   const existing = await db.creator.findUnique({ where: { slug } });
   return !existing;
 }

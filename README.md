@@ -53,6 +53,19 @@ POST   /creators/claim       - Claim a slug (JWT)
 PATCH  /creators/me          - Update profile (JWT)
 PATCH  /creators/me/splits   - Update splits (JWT)
 
+Reserved slugs (api, admin, dashboard, onboarding, settings, login, logout,
+auth, support, help, about, terms, privacy, static, _next, novatip — see
+RESERVED_SLUGS in creator.service.ts) can't be claimed and are reported as
+unavailable by /creators/check/:slug. Run `npm run check:reserved-slugs`
+against a given environment to find existing creators who already hold one
+of these slugs from before the list existed.
+
+POST /creators/claim returns 409 when the slug or jarId is already taken,
+including when two requests race for the same one — the database's unique
+constraint is the real guard, not just the pre-check. The response body's
+error.code is "SLUG_TAKEN" or "JARID_TAKEN" so callers can tell which
+field conflicted.
+
 GET /qr/:slug                - QR code SVG
 GET /qr/:slug/png            - QR code PNG download
 GET /resolve/:slug           - Full tip-page data
@@ -68,6 +81,12 @@ GET /analytics/totals        - Total tips, amount, supporters (JWT)
 GET /analytics/timeseries    - Daily breakdown ?days=30 (JWT)
 GET /analytics/top-supporters- Ranked supporters ?limit=10 (JWT)
 GET /analytics/recent        - Live tip feed ?limit=20 (JWT)
+
+/analytics/timeseries always returns exactly `days` points, oldest first, one
+per UTC calendar day (00:00–23:59:59 UTC) up to and including today. Days
+with no tips are included with tipCount: 0 and amountRaw: "0" rather than
+omitted, so charts can plot the series directly without gap-filling. Day
+boundaries are UTC, not the requesting client's local time zone.
 
 GET    /webhooks             - List webhooks (JWT)
 POST   /webhooks             - Register webhook (JWT)
@@ -150,6 +169,7 @@ npm run db:generate       - regenerate Prisma client
 npm run db:migrate        - apply migrations (dev)
 npm run db:migrate:deploy - apply migrations (production)
 npm run db:studio         - open Prisma Studio
+npm run check:reserved-slugs - report existing creators holding a reserved slug
 
 ## License
 
