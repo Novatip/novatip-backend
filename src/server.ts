@@ -5,7 +5,7 @@
  * All plugins, route registration, and lifecycle hooks live here.
  */
 
-import Fastify, { FastifyInstance } from "fastify";
+import Fastify, { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import jwt from "@fastify/jwt";
@@ -50,13 +50,16 @@ export async function buildServer(): Promise<FastifyInstance> {
 
   // ── Decorators ────────────────────────────────────────────────────────────
   // Convenience decorator so route handlers can call request.authenticate()
-  server.decorate("authenticate", async function (request: any, reply: any) {
-    try {
-      await request.jwtVerify();
-    } catch (err) {
-      reply.send(err);
-    }
-  });
+  server.decorate(
+    "authenticate",
+    async function (request: FastifyRequest, reply: FastifyReply) {
+      try {
+        await request.jwtVerify();
+      } catch (err) {
+        reply.status(401).send(err);
+      }
+    },
+  );
 
   // ── Routes ────────────────────────────────────────────────────────────────
   await server.register(

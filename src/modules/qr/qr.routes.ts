@@ -21,7 +21,7 @@ export const qrRoutes: FastifyPluginAsync = async (app) => {
     // Validate the creator exists before generating
     await getCreatorBySlug(slug);
 
-    const tipUrl = `${config.appBaseUrl}/@${slug}`;
+    const tipUrl = `${config.appBaseUrl}/${slug}`;
 
     const svg = await QRCode.toString(tipUrl, {
       type: "svg",
@@ -41,7 +41,7 @@ export const qrRoutes: FastifyPluginAsync = async (app) => {
 
     await getCreatorBySlug(slug);
 
-    const tipUrl = `${config.appBaseUrl}/@${slug}`;
+    const tipUrl = `${config.appBaseUrl}/${slug}`;
 
     const pngBuffer = await QRCode.toBuffer(tipUrl, {
       type: "png",

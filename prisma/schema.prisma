@@ -62,6 +62,10 @@ model Tip {
   @@index([fromAddress])
   @@index([ledger])
   @@index([ledgerAt])
+  /// Supports getTopSupporters' GROUP BY "fromAddress" scoped to a creator
+  @@index([creatorId, fromAddress])
+  /// Supports getTimeSeries' GROUP BY date_trunc("ledgerAt") scoped to a creator
+  @@index([creatorId, ledgerAt])
 }
 
 // ── Webhook ───────────────────────────────────────────────────────────────────

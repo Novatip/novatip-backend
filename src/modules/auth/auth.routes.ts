@@ -52,9 +52,9 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
   // ── GET /me ────────────────────────────────────────────────────────────────
   app.get(
     "/me",
-    { onRequest: [(app as any).authenticate] },
+    { onRequest: [app.authenticate] },
     async (request, reply) => {
-      return reply.send({ user: (request as any).user });
+      return reply.send({ user: request.user });
     },
   );
 };

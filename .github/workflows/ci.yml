@@ -8,8 +8,12 @@ on:
 
 jobs:
   ci:
-    name: Lint · Typecheck · Test · Build
+    name: Lint · Typecheck · Test · Build (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [18, 20]
 
     steps:
       # @novatip/sdk is resolved as `file:../novatip-sdk`, so the SDK has to sit
@@ -29,7 +33,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ matrix.node-version }}
           cache: npm
           cache-dependency-path: |
             novatip-backend/package-lock.json
