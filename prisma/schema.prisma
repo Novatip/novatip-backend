@@ -52,8 +52,8 @@ model Tip {
   fromAddress String
   /// Amount in USDC stroops (stored as String to preserve i128 precision)
   amount      String
-  /// Optional supporter message
-  message     String   @default("")
+  /// Optional supporter message (bounded to the contract's 280-byte limit)
+  message     String   @default("") @db.VarChar(280)
   creatorId   String
   creator     Creator  @relation(fields: [creatorId], references: [id])
   createdAt   DateTime @default(now())

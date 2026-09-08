@@ -10,6 +10,52 @@ import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { generateChallenge, verifyChallenge } from "./auth.service.js";
 
+/**
+ * POST /auth/challenge generates a 32-byte nonce and writes it to Redis.
+ * It is unauthenticated by nature, so under the shared global budget (100
+ * req/min) a single caller can exhaust the allowance minting nonces for
+ * arbitrary wallet addresses, filling Redis with short-lived keys and
+ * starving legitimate auth traffic.
+ *
+ * This dedicated limiter enforces a much tighter per-IP cap. The limit is
+ * configurable via AUTH_CHALLENGE_RATE_LIMIT (default 5 req/min per IP).
+ */
+const AUTH_CHALLENGE_RATE_LIMIT = Number(process.env.AUTH_CHALLENGE_RATE_LIMIT) || 5;
+
+interface SlidingWindow {
+  count: number;
+  windowStart: number;
+}
+
+function buildSlidingWindowLimiter(
+  limit: number,
+  windowMs: number = 60_000,
+): (request: any, reply: any) => void {
+  const clients = new Map<string, SlidingWindow>();
+
+  return (request: any, reply: any) => {
+    const ip = request.ip;
+    const now = Date.now();
+    let entry = clients.get(ip);
+
+    if (!entry || now - entry.windowStart >= windowMs) {
+      entry = { count: 1, windowStart: now };
+      clients.set(ip, entry);
+      return;
+    }
+
+    entry.count += 1;
+    if (entry.count > limit) {
+      reply.status(429).send({
+        error: {
+          code: "AUTH_RATE_LIMITED",
+          message: "Too many auth requests. Try again in a minute.",
+        },
+      });
+    }
+  };
+}
+
 const ChallengeBody = z.object({
   walletAddress: z.string().min(56).max(56),
 });
@@ -21,7 +67,14 @@ const VerifyBody = z.object({
 
 export const authRoutes: FastifyPluginAsync = async (app) => {
   // ── POST /challenge ────────────────────────────────────────────────────────
-  app.post("/challenge", async (request, reply) => {
+  const challengeLimiter = buildSlidingWindowLimiter(AUTH_CHALLENGE_RATE_LIMIT);
+  app.addHook("preHandler", challengeLimiter, async (request, reply) => {
+    if (request.method !== "POST" || !request.url.startsWith("/challenge")) {
+      return;
+    }
+  });
+
+  app.post("/challenge", { onRequest: [challengeLimiter] }, async (request, reply) => {
     const body = ChallengeBody.safeParse(request.body);
     if (!body.success) {
       return reply.status(400).send({ error: body.error.flatten() });
