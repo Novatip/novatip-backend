@@ -36,6 +36,10 @@ USDC_CONTRACT_ID - USDC Stellar Asset Contract ID
 INDEXER_START_LEDGER - Ledger to begin indexing from (default: 0)
 RESEND_API_KEY - Resend API key (skip to disable email)
 APP_BASE_URL - Frontend base URL (default: http://localhost:3000)
+WEBHOOK_DELIVERY_RETENTION_DAYS - Prune successful deliveries older than this (default: 30, 0 disables)
+WEBHOOK_DELIVERY_FAILURE_RETENTION_DAYS - Prune failed deliveries older than this (default: 90, 0 disables)
+WEBHOOK_DELIVERY_PRUNE_BATCH_SIZE - Rows deleted per statement (default: 500)
+WEBHOOK_DELIVERY_PRUNE_INTERVAL_MINUTES - How often the pruner runs (default: 60)
 
 ## API Overview  (base: /api/v1)
 
@@ -162,6 +166,45 @@ dispatch are not, which is why the cursor must not linger on a handled ledger.
 
 Header: X-Novatip-Signature: sha256=<hex>
 Verify: createHmac("sha256", secret).update(body).digest("hex")
+
+## Webhook Delivery Retention
+
+Every dispatch attempt writes a WebhookDelivery row holding the request payload
+and up to 1 KB of the response body — one per tip, per enabled webhook. A
+creator with three webhooks generates three rows per tip, so without pruning
+this becomes the largest table in the database and starts driving storage and
+backup cost long before anyone thinks to look at it.
+
+A background pruner (src/modules/webhooks/retention.ts) deletes aged-out rows
+on a schedule. Successes and failures have separate windows: successes are the
+bulk of the volume and the least useful, failures are what actually gets
+debugged, so they are kept three times as long by default. Setting a window to
+0 keeps that class indefinitely; setting both disables the pruner entirely and
+logs that it is off at startup.
+
+Deletes run in batches of WEBHOOK_DELIVERY_PRUNE_BATCH_SIZE, selected by id and
+then deleted by id, so each statement touches a bounded set of rows even while
+new deliveries are being written. A run stops after 50 batches and resumes on
+the next tick, which keeps a first run against a large backlog from turning
+into one long-held transaction. Each pass reschedules itself on completion
+rather than firing on a fixed interval, so a slow run can never overlap the
+next one. A failed pass is logged and retried on the next tick.
+
+The prune predicate (`success = ? AND "attemptedAt" < ?`) is served by the
+WebhookDelivery_success_attemptedAt_idx index added in
+prisma/migrations/20260908000000_webhook_delivery_retention_index.
+
+### Manual verification
+
+1. Seed rows on both sides of a window:
+   `INSERT INTO "WebhookDelivery" (id, "webhookId", success, payload, "attemptedAt")
+    SELECT gen_random_uuid()::text, '<id>', true, '{}'::jsonb, now() - interval '60 days'
+    FROM generate_series(1, 2000);`
+2. Start the server and wait for the first run (60s after boot).
+3. Expect a "pruned webhook deliveries" log line and the aged rows gone, with
+   rows inside the window untouched.
+4. Confirm the index is used, not a sequential scan:
+   `EXPLAIN DELETE FROM "WebhookDelivery" WHERE success = true AND "attemptedAt" < now() - interval '30 days';`
 
 ## Scripts
 
