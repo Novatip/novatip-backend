@@ -23,7 +23,18 @@ export const webhookRoutes: FastifyPluginAsync = async (app) => {
   // ── GET / ──────────────────────────────────────────────────────────────────
   app.get("/", async (request, reply) => {
     const { user } = request;
-    const webhooks = await listWebhooks(user.sub);
+    const query = z
+      .object({
+        limit: z.string().regex(/^[0-9]+$/).transform(Number).optional(),
+        offset: z.string().regex(/^[0-9]+$/).transform(Number).optional(),
+      })
+      .safeParse(request.query);
+    if (!query.success) {
+      return reply.status(400).send({ error: query.error.flatten() });
+    }
+    const limit = Math.min(query.data.limit ?? 50, 100);
+    const offset = query.data.offset ?? 0;
+    const webhooks = await listWebhooks(user.sub, limit, offset);
     return reply.send({ webhooks });
   });
 
