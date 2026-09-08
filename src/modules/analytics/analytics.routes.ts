@@ -37,8 +37,11 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
   app.get("/timeseries", async (request, reply) => {
     const { user } = request;
     const query = request.query as Record<string, string>;
-    const days  = DaysQuery.parse(query["days"]);
-    const series = await getTimeSeries(user.sub, days);
+    const parsed = DaysQuery.safeParse(query["days"]);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: parsed.error.flatten() });
+    }
+    const series = await getTimeSeries(user.sub, parsed.data);
     return reply.send({ series });
   });
 
@@ -46,8 +49,11 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
   app.get("/top-supporters", async (request, reply) => {
     const { user } = request;
     const query = request.query as Record<string, string>;
-    const limit = LimitQuery.parse(query["limit"]);
-    const supporters = await getTopSupporters(user.sub, limit);
+    const parsed = LimitQuery.safeParse(query["limit"]);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: parsed.error.flatten() });
+    }
+    const supporters = await getTopSupporters(user.sub, parsed.data);
     return reply.send({ supporters });
   });
 
@@ -55,8 +61,11 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
   app.get("/recent", async (request, reply) => {
     const { user } = request;
     const query = request.query as Record<string, string>;
-    const limit = LimitQuery.parse(query["limit"] ?? "20");
-    const tips  = await getRecentTips(user.sub, limit);
+    const parsed = LimitQuery.safeParse(query["limit"] ?? "20");
+    if (!parsed.success) {
+      return reply.status(400).send({ error: parsed.error.flatten() });
+    }
+    const tips = await getRecentTips(user.sub, parsed.data);
     return reply.send({ tips });
   });
 };
