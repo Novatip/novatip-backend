@@ -168,6 +168,19 @@ dispatch are not, which is why the cursor must not linger on a handled ledger.
    `SELECT "lastLedger" FROM "IndexerCursor" WHERE id = 1;`
 6. Restart the server and confirm the tip is not re-delivered on resume.
 
+## Tip Notifications
+
+After each indexed tip the creator gets an email via Resend. Delivery needs
+two things: RESEND_API_KEY set on the server, and an address on the creator
+(PATCH /creators/me). Either one missing is a skip, not an error — a creator
+who only wants webhooks never sets an address, so that case logs at debug and
+returns rather than warning once per tip.
+
+Resend reports API failures through the returned `error` rather than by
+throwing, so a rejected send is checked explicitly; the Notification row is
+written only after a send actually succeeds, and never records an email the
+provider refused.
+
 ## Webhook Signatures
 
 Header: X-Novatip-Signature: sha256=<hex>
