@@ -131,9 +131,12 @@ export async function createWebhook(creatorId: string, url: string, secret: stri
   return db.webhook.create({ data: { creatorId, url, secret } });
 }
 
-export async function listWebhooks(creatorId: string) {
+export async function listWebhooks(creatorId: string, limit = 50, offset = 0) {
   return db.webhook.findMany({
     where:  { creatorId },
+    orderBy: { createdAt: "desc" },
+    take:   limit,
+    skip:   offset,
     select: { id: true, url: true, enabled: true, createdAt: true },
   });
 }
