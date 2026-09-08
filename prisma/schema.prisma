@@ -102,6 +102,10 @@ model WebhookDelivery {
   attemptedAt DateTime @default(now())
 
   @@index([webhookId])
+  /// Supports the retention prune's `success = ? AND attemptedAt < ?` scan.
+  /// Successes and failures age out on different schedules, so success leads
+  /// the index and attemptedAt gives the range within each half.
+  @@index([success, attemptedAt])
 }
 
 // ── Notification ──────────────────────────────────────────────────────────────
