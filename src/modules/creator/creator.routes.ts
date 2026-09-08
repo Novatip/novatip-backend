@@ -22,7 +22,10 @@ import { httpsUrl } from "../../utils/validation.js";
 
 const ClaimBody = z.object({
   slug:        z.string().min(3).max(32),
-  jarId:       z.string().min(1),
+  // Optional: the stored jarId is derived from the slug. A supplied value is
+  // still checked against it, so an out-of-sync client gets a 400 rather than
+  // a creator whose page and on-chain jar disagree.
+  jarId:       z.string().min(1).optional(),
   displayName: z.string().max(80).optional(),
   bio:         z.string().max(300).optional(),
   splits:      z.array(z.object({ to: z.string(), bps: z.number().int() })).optional(),

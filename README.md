@@ -60,6 +60,12 @@ unavailable by /creators/check/:slug. Run `npm run check:reserved-slugs`
 against a given environment to find existing creators who already hold one
 of these slugs from before the list existed.
 
+POST /creators/claim derives the on-chain jarId from the claimed slug
+("alice" → "@alice"); the body field is optional. A client that does send it
+must send the matching value — a mismatched pair is rejected with 400 rather
+than overwritten, since it means the caller registered a jar the backend
+would not be able to resolve tips against.
+
 POST /creators/claim returns 409 when the slug or jarId is already taken,
 including when two requests race for the same one — the database's unique
 constraint is the real guard, not just the pre-check. The response body's

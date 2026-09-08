@@ -74,8 +74,13 @@ export interface PublicCreator {
 export interface ClaimSlugInput {
   creatorId: string;
   slug: string;
-  /** On-chain jar ID — must match slug, e.g. "@alice" */
-  jarId: string;
+  /**
+   * On-chain jar ID, e.g. "@alice". Optional: the stored value is always
+   * derived from the slug (see resolveJarId). Supplying it is supported for
+   * clients that already registered the jar on-chain and want the mismatch
+   * caught rather than silently overridden.
+   */
+  jarId?: string | undefined;
   displayName?: string | undefined;
   bio?: string | undefined;
   splits?: Array<{ to: string; bps: number }> | undefined;
@@ -86,6 +91,43 @@ export interface UpdateProfileInput {
   displayName?: string | undefined;
   bio?: string | undefined;
   avatarUrl?: string | undefined;
+}
+
+// ── Jar ID ────────────────────────────────────────────────────────────────────
+
+/**
+ * The on-chain jar ID for a slug. The "@" belongs to the jar ID, not to the
+ * web URL — see the tip-URL note in the README.
+ */
+export function jarIdForSlug(slug: string): string {
+  return `@${slug}`;
+}
+
+/**
+ * Resolve the jar ID to store for a claim.
+ *
+ * The value is derived from the slug rather than taken from the request, so a
+ * creator whose web slug and on-chain jar disagree is unrepresentable. The
+ * indexer resolves tips by jarId, and a mismatch there means tips either land
+ * against a creator whose public page lives at a different address or never
+ * resolve at all.
+ *
+ * A caller may still send jarId — novatip-web does — but it must match. An
+ * explicit mismatch is rejected rather than quietly overwritten: the caller
+ * registered that jar on-chain, so disagreeing with them is a real error on
+ * one side or the other, and silently picking a winner hides it.
+ */
+export function resolveJarId(slug: string, jarId?: string | undefined): string {
+  const expected = jarIdForSlug(slug);
+
+  if (jarId !== undefined && jarId !== expected) {
+    throw Object.assign(
+      new Error(`jarId must be "${expected}" to match the claimed slug.`),
+      { statusCode: 400 },
+    );
+  }
+
+  return expected;
 }
 
 // ── Slug claim ────────────────────────────────────────────────────────────────
@@ -109,16 +151,7 @@ export async function claimSlug(input: ClaimSlugInput) {
     );
   }
 
-  // jarId must match the slug — the on-chain jar is addressed by slug.
-  // A mismatch would make the indexer unable to resolve tips to the creator's
-  // public page, or silently drop them.
-  const expectedJarId = `@${input.slug}`;
-  if (input.jarId !== expectedJarId) {
-    throw Object.assign(
-      new Error(`jarId must be "${expectedJarId}" to match the claimed slug.`),
-      { statusCode: 400 },
-    );
-  }
+  const jarId = resolveJarId(input.slug, input.jarId);
 
   // Check availability. This pre-check handles the common case, but two
   // requests can race and both pass it before either writes — the unique
@@ -140,7 +173,7 @@ export async function claimSlug(input: ClaimSlugInput) {
       // an explicit undefined to say the same thing.
       data: {
         slug:   input.slug,
-        jarId:  input.jarId,
+        jarId,
         splits: input.splits ?? [],
         ...(input.displayName !== undefined && { displayName: input.displayName }),
         ...(input.bio !== undefined && { bio: input.bio }),
