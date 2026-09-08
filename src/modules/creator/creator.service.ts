@@ -13,6 +13,10 @@
 import { Prisma } from "@prisma/client";
 import { db } from "../../db.js";
 import { cacheInvalidate, cacheGet, cacheSet } from "../../redis.js";
+import { resolveJarId } from "./jar-id.js";
+
+// Re-exported so callers keep importing the creator API from one place.
+export { jarIdForSlug, resolveJarId } from "./jar-id.js";
 
 const SLUG_REGEX = /^[a-z0-9_-]{3,32}$/;
 const PROFILE_CACHE_TTL = 60; // seconds
@@ -91,43 +95,6 @@ export interface UpdateProfileInput {
   displayName?: string | undefined;
   bio?: string | undefined;
   avatarUrl?: string | undefined;
-}
-
-// ── Jar ID ────────────────────────────────────────────────────────────────────
-
-/**
- * The on-chain jar ID for a slug. The "@" belongs to the jar ID, not to the
- * web URL — see the tip-URL note in the README.
- */
-export function jarIdForSlug(slug: string): string {
-  return `@${slug}`;
-}
-
-/**
- * Resolve the jar ID to store for a claim.
- *
- * The value is derived from the slug rather than taken from the request, so a
- * creator whose web slug and on-chain jar disagree is unrepresentable. The
- * indexer resolves tips by jarId, and a mismatch there means tips either land
- * against a creator whose public page lives at a different address or never
- * resolve at all.
- *
- * A caller may still send jarId — novatip-web does — but it must match. An
- * explicit mismatch is rejected rather than quietly overwritten: the caller
- * registered that jar on-chain, so disagreeing with them is a real error on
- * one side or the other, and silently picking a winner hides it.
- */
-export function resolveJarId(slug: string, jarId?: string | undefined): string {
-  const expected = jarIdForSlug(slug);
-
-  if (jarId !== undefined && jarId !== expected) {
-    throw Object.assign(
-      new Error(`jarId must be "${expected}" to match the claimed slug.`),
-      { statusCode: 400 },
-    );
-  }
-
-  return expected;
 }
 
 // ── Slug claim ────────────────────────────────────────────────────────────────
