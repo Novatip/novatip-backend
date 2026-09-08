@@ -23,6 +23,11 @@ model Creator {
   displayName String?
   bio         String?
   avatarUrl   String?
+  /// Contact address for tip notifications. Optional — a creator who only
+  /// wants webhooks is not required to hand one over. Private: excluded from
+  /// the select in getCreatorBySlug, which backs both the public creator
+  /// endpoint and the resolver.
+  email       String?
   /// On-chain jar ID registered in tip_splitter, e.g. "@alice"
   jarId       String   @unique
   /// JSON array of Split objects [{ to, bps }]

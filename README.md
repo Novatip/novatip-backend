@@ -76,6 +76,12 @@ constraint is the real guard, not just the pre-check. The response body's
 error.code is "SLUG_TAKEN" or "JARID_TAKEN" so callers can tell which
 field conflicted.
 
+PATCH /creators/me accepts an optional email address, used as the recipient
+for tip notifications. It is private: the public creator endpoint and
+/resolve/:slug both read through getCreatorBySlug, whose select allowlists the
+world-readable columns and omits it. Send null to clear a stored address; omit
+the field to leave it unchanged.
+
 GET /qr/:slug                - QR code SVG
 GET /qr/:slug/png            - QR code PNG download
 GET /resolve/:slug           - Full tip-page data

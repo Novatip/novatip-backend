@@ -95,6 +95,12 @@ export interface UpdateProfileInput {
   displayName?: string | undefined;
   bio?: string | undefined;
   avatarUrl?: string | undefined;
+  /**
+   * Contact address for tip notifications. `null` clears it — a creator who
+   * changes their mind needs a way to take the address back, and an absent
+   * key already means "leave unchanged".
+   */
+  email?: string | null | undefined;
 }
 
 // ── Slug claim ────────────────────────────────────────────────────────────────
@@ -184,6 +190,11 @@ function toClaimConflict(err: unknown): unknown {
 /**
  * Get a public creator profile by slug.
  * Result is cached in Redis for 60 seconds.
+ *
+ * The `select` below is an allowlist, not a convenience: it is what keeps
+ * private columns — email in particular — out of the public creator endpoint,
+ * the resolver that reuses this function, and the Redis cache. Add a field
+ * here only if it is meant to be world-readable.
  */
 export async function getCreatorBySlug(slug: string): Promise<PublicCreator> {
   const cacheKey = `creator:${slug}`;
@@ -223,6 +234,7 @@ export async function updateProfile(input: UpdateProfileInput) {
       ...(input.displayName !== undefined && { displayName: input.displayName }),
       ...(input.bio !== undefined && { bio: input.bio }),
       ...(input.avatarUrl !== undefined && { avatarUrl: input.avatarUrl }),
+      ...(input.email !== undefined && { email: input.email }),
     },
   });
 

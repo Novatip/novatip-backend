@@ -18,7 +18,7 @@ import {
   isSlugAvailable,
   type PublicCreator,
 } from "./creator.service.js";
-import { httpsUrl } from "../../utils/validation.js";
+import { creatorEmail, httpsUrl } from "../../utils/validation.js";
 
 const ClaimBody = z.object({
   slug:        z.string().min(3).max(32),
@@ -35,6 +35,8 @@ const UpdateProfileBody = z.object({
   displayName: z.string().max(80).optional(),
   bio:         z.string().max(300).optional(),
   avatarUrl:   httpsUrl.optional(),
+  // Nullable so the field can be cleared; omitting it leaves it unchanged.
+  email:       creatorEmail.nullable().optional(),
 });
 
 const UpdateSplitsBody = z.object({
