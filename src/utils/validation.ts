@@ -41,3 +41,29 @@ export const httpsUrl = z
     },
     { message: "Avatar URL must use the https: scheme." },
   );
+
+/**
+ * A creator's contact email.
+ *
+ * Trimmed and lowercased before validation so the stored value is canonical —
+ * addresses arrive from a form field and " Alice@Example.com " and
+ * "alice@example.com" are the same mailbox.
+ *
+ * 254 is the maximum length of an address that can actually be delivered
+ * (RFC 5321's limit on the SMTP reverse/forward path).
+ *
+ * @example
+ * // Accepted
+ * "alice@example.com"
+ * " Alice@Example.COM "   // stored as "alice@example.com"
+ *
+ * // Rejected
+ * "not-an-address"
+ * "alice@"
+ */
+export const creatorEmail = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .email({ message: "Must be a valid email address." })
+  .max(254, { message: "Email address is too long." });

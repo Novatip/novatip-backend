@@ -36,6 +36,10 @@ USDC_CONTRACT_ID - USDC Stellar Asset Contract ID
 INDEXER_START_LEDGER - Ledger to begin indexing from (default: 0)
 RESEND_API_KEY - Resend API key (skip to disable email)
 APP_BASE_URL - Frontend base URL (default: http://localhost:3000)
+WEBHOOK_DELIVERY_RETENTION_DAYS - Prune successful deliveries older than this (default: 30, 0 disables)
+WEBHOOK_DELIVERY_FAILURE_RETENTION_DAYS - Prune failed deliveries older than this (default: 90, 0 disables)
+WEBHOOK_DELIVERY_PRUNE_BATCH_SIZE - Rows deleted per statement (default: 500)
+WEBHOOK_DELIVERY_PRUNE_INTERVAL_MINUTES - How often the pruner runs (default: 60)
 
 ## API Overview  (base: /api/v1)
 
@@ -60,11 +64,23 @@ unavailable by /creators/check/:slug. Run `npm run check:reserved-slugs`
 against a given environment to find existing creators who already hold one
 of these slugs from before the list existed.
 
+POST /creators/claim derives the on-chain jarId from the claimed slug
+("alice" → "@alice"); the body field is optional. A client that does send it
+must send the matching value — a mismatched pair is rejected with 400 rather
+than overwritten, since it means the caller registered a jar the backend
+would not be able to resolve tips against.
+
 POST /creators/claim returns 409 when the slug or jarId is already taken,
 including when two requests race for the same one — the database's unique
 constraint is the real guard, not just the pre-check. The response body's
 error.code is "SLUG_TAKEN" or "JARID_TAKEN" so callers can tell which
 field conflicted.
+
+PATCH /creators/me accepts an optional email address, used as the recipient
+for tip notifications. It is private: the public creator endpoint and
+/resolve/:slug both read through getCreatorBySlug, whose select allowlists the
+world-readable columns and omits it. Send null to clear a stored address; omit
+the field to leave it unchanged.
 
 GET /qr/:slug                - QR code SVG
 GET /qr/:slug/png            - QR code PNG download
@@ -152,10 +168,62 @@ dispatch are not, which is why the cursor must not linger on a handled ledger.
    `SELECT "lastLedger" FROM "IndexerCursor" WHERE id = 1;`
 6. Restart the server and confirm the tip is not re-delivered on resume.
 
+## Tip Notifications
+
+After each indexed tip the creator gets an email via Resend. Delivery needs
+two things: RESEND_API_KEY set on the server, and an address on the creator
+(PATCH /creators/me). Either one missing is a skip, not an error — a creator
+who only wants webhooks never sets an address, so that case logs at debug and
+returns rather than warning once per tip.
+
+Resend reports API failures through the returned `error` rather than by
+throwing, so a rejected send is checked explicitly; the Notification row is
+written only after a send actually succeeds, and never records an email the
+provider refused.
+
 ## Webhook Signatures
 
 Header: X-Novatip-Signature: sha256=<hex>
 Verify: createHmac("sha256", secret).update(body).digest("hex")
+
+## Webhook Delivery Retention
+
+Every dispatch attempt writes a WebhookDelivery row holding the request payload
+and up to 1 KB of the response body — one per tip, per enabled webhook. A
+creator with three webhooks generates three rows per tip, so without pruning
+this becomes the largest table in the database and starts driving storage and
+backup cost long before anyone thinks to look at it.
+
+A background pruner (src/modules/webhooks/retention.ts) deletes aged-out rows
+on a schedule. Successes and failures have separate windows: successes are the
+bulk of the volume and the least useful, failures are what actually gets
+debugged, so they are kept three times as long by default. Setting a window to
+0 keeps that class indefinitely; setting both disables the pruner entirely and
+logs that it is off at startup.
+
+Deletes run in batches of WEBHOOK_DELIVERY_PRUNE_BATCH_SIZE, selected by id and
+then deleted by id, so each statement touches a bounded set of rows even while
+new deliveries are being written. A run stops after 50 batches and resumes on
+the next tick, which keeps a first run against a large backlog from turning
+into one long-held transaction. Each pass reschedules itself on completion
+rather than firing on a fixed interval, so a slow run can never overlap the
+next one. A failed pass is logged and retried on the next tick.
+
+The prune predicate (`success = ? AND "attemptedAt" < ?`) is served by the
+WebhookDelivery_success_attemptedAt_idx index added in
+prisma/migrations/20260908000000_webhook_delivery_retention_index.
+
+### Manual verification
+
+1. Seed rows on both sides of a window:
+   `INSERT INTO "WebhookDelivery" (id, "webhookId", success, payload, "attemptedAt")
+    SELECT gen_random_uuid()::text, '<id>', true, '{}'::jsonb, now() - interval '60 days'
+    FROM generate_series(1, 2000);`
+2. Start the server and wait for the first run (60s after boot).
+3. Expect a "pruned webhook deliveries" log line and the aged rows gone, with
+   rows inside the window untouched.
+4. Confirm the index is used, not a sequential scan:
+   `EXPLAIN DELETE FROM "WebhookDelivery" WHERE success = true AND "attemptedAt" < now() - interval '30 days';`
 
 ## Scripts
 

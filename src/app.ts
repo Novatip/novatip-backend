@@ -7,6 +7,10 @@ import "dotenv/config";
 import { buildServer } from "./server.js";
 import { config } from "./config.js";
 import { startIndexer, stopIndexer } from "./indexer/indexer.js";
+import {
+  startDeliveryPruner,
+  stopDeliveryPruner,
+} from "./modules/webhooks/retention.js";
 
 const server = await buildServer();
 
@@ -15,10 +19,14 @@ startIndexer().catch((err) => {
   server.log.error(err, "[indexer] fatal startup error");
 });
 
+// Age out old webhook delivery rows on a schedule
+startDeliveryPruner();
+
 // Graceful shutdown
 const shutdown = async (): Promise<void> => {
   server.log.info("Shutting down...");
   stopIndexer();
+  stopDeliveryPruner();
   await server.close();
   process.exit(0);
 };

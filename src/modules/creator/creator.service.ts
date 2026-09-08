@@ -13,6 +13,10 @@
 import { Prisma } from "@prisma/client";
 import { db } from "../../db.js";
 import { cacheInvalidate, cacheGet, cacheSet } from "../../redis.js";
+import { resolveJarId } from "./jar-id.js";
+
+// Re-exported so callers keep importing the creator API from one place.
+export { jarIdForSlug, resolveJarId } from "./jar-id.js";
 
 const SLUG_REGEX = /^[a-z0-9_-]{3,32}$/;
 const PROFILE_CACHE_TTL = 60; // seconds
@@ -74,8 +78,13 @@ export interface PublicCreator {
 export interface ClaimSlugInput {
   creatorId: string;
   slug: string;
-  /** On-chain jar ID — must match slug, e.g. "@alice" */
-  jarId: string;
+  /**
+   * On-chain jar ID, e.g. "@alice". Optional: the stored value is always
+   * derived from the slug (see resolveJarId). Supplying it is supported for
+   * clients that already registered the jar on-chain and want the mismatch
+   * caught rather than silently overridden.
+   */
+  jarId?: string | undefined;
   displayName?: string | undefined;
   bio?: string | undefined;
   splits?: Array<{ to: string; bps: number }> | undefined;
@@ -86,6 +95,12 @@ export interface UpdateProfileInput {
   displayName?: string | undefined;
   bio?: string | undefined;
   avatarUrl?: string | undefined;
+  /**
+   * Contact address for tip notifications. `null` clears it — a creator who
+   * changes their mind needs a way to take the address back, and an absent
+   * key already means "leave unchanged".
+   */
+  email?: string | null | undefined;
 }
 
 // ── Slug claim ────────────────────────────────────────────────────────────────
@@ -109,16 +124,7 @@ export async function claimSlug(input: ClaimSlugInput) {
     );
   }
 
-  // jarId must match the slug — the on-chain jar is addressed by slug.
-  // A mismatch would make the indexer unable to resolve tips to the creator's
-  // public page, or silently drop them.
-  const expectedJarId = `@${input.slug}`;
-  if (input.jarId !== expectedJarId) {
-    throw Object.assign(
-      new Error(`jarId must be "${expectedJarId}" to match the claimed slug.`),
-      { statusCode: 400 },
-    );
-  }
+  const jarId = resolveJarId(input.slug, input.jarId);
 
   // Check availability. This pre-check handles the common case, but two
   // requests can race and both pass it before either writes — the unique
@@ -140,7 +146,7 @@ export async function claimSlug(input: ClaimSlugInput) {
       // an explicit undefined to say the same thing.
       data: {
         slug:   input.slug,
-        jarId:  input.jarId,
+        jarId,
         splits: input.splits ?? [],
         ...(input.displayName !== undefined && { displayName: input.displayName }),
         ...(input.bio !== undefined && { bio: input.bio }),
@@ -184,6 +190,11 @@ function toClaimConflict(err: unknown): unknown {
 /**
  * Get a public creator profile by slug.
  * Result is cached in Redis for 60 seconds.
+ *
+ * The `select` below is an allowlist, not a convenience: it is what keeps
+ * private columns — email in particular — out of the public creator endpoint,
+ * the resolver that reuses this function, and the Redis cache. Add a field
+ * here only if it is meant to be world-readable.
  */
 export async function getCreatorBySlug(slug: string): Promise<PublicCreator> {
   const cacheKey = `creator:${slug}`;
@@ -223,6 +234,7 @@ export async function updateProfile(input: UpdateProfileInput) {
       ...(input.displayName !== undefined && { displayName: input.displayName }),
       ...(input.bio !== undefined && { bio: input.bio }),
       ...(input.avatarUrl !== undefined && { avatarUrl: input.avatarUrl }),
+      ...(input.email !== undefined && { email: input.email }),
     },
   });
 

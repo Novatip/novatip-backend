@@ -1,10 +1,12 @@
 /**
  * notifications/email.service.ts
  *
- * Email notification stub using Resend (https://resend.com).
+ * Email notifications via Resend (https://resend.com).
  *
  * Sends a "You received a tip!" email to the creator after each indexed tip.
- * Silently skips if RESEND_API_KEY is not configured (local dev default).
+ * Skips quietly when RESEND_API_KEY is not configured (the local dev default)
+ * or when the creator has not given an address — a creator who only wants
+ * webhooks is not required to.
  */
 
 import type { TipEvent } from "@novatip/sdk";
@@ -17,7 +19,9 @@ const emailLogger = logger.child({ component: "notifications" });
 
 /**
  * Send a tip-received email notification to the creator.
- * Fails silently if Resend is not configured or the creator has no email.
+ *
+ * Called from the indexer's per-event path, so it never throws: a notification
+ * failing must not stop a tip being recorded or its webhooks being delivered.
  */
 export async function sendTipNotification(event: TipEvent): Promise<void> {
   if (!config.resend.apiKey) return; // not configured — skip
@@ -28,16 +32,14 @@ export async function sendTipNotification(event: TipEvent): Promise<void> {
 
   if (!creator) return;
 
-  // TODO: add a creator email field to the schema in a future commit.
-  // Until it exists there is no address to send to, and Resend rejects an
-  // empty recipient list — so skip rather than issue a request that can only
-  // fail.
-  const recipients: string[] = [];
-
-  if (recipients.length === 0) {
-    emailLogger.warn(
+  // Creator.email is optional, and leaving it unset is a normal choice rather
+  // than a misconfiguration — a creator may want webhooks only. Debug, not
+  // warn: at one line per tip this would otherwise be the loudest thing in the
+  // log for every creator who never opted in.
+  if (!creator.email) {
+    emailLogger.debug(
       { slug: creator.slug },
-      "no email on record for creator — skipping tip notification",
+      "creator has no email on record — skipping tip notification",
     );
     return;
   }
@@ -55,7 +57,7 @@ export async function sendTipNotification(event: TipEvent): Promise<void> {
     // throwing, so the catch below never sees them — check it explicitly.
     const { error } = await resend.emails.send({
       from:    config.resend.from,
-      to:      recipients,
+      to:      [creator.email],
       subject: `💸 You received $${amount} USDC on Novatip!`,
       html: `
         <h2>Hey ${displayName}!</h2>
