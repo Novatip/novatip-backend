@@ -109,6 +109,17 @@ export async function claimSlug(input: ClaimSlugInput) {
     );
   }
 
+  // jarId must match the slug — the on-chain jar is addressed by slug.
+  // A mismatch would make the indexer unable to resolve tips to the creator's
+  // public page, or silently drop them.
+  const expectedJarId = `@${input.slug}`;
+  if (input.jarId !== expectedJarId) {
+    throw Object.assign(
+      new Error(`jarId must be "${expectedJarId}" to match the claimed slug.`),
+      { statusCode: 400 },
+    );
+  }
+
   // Check availability. This pre-check handles the common case, but two
   // requests can race and both pass it before either writes — the unique
   // constraint below is what actually prevents a duplicate.
