@@ -200,7 +200,11 @@ export async function getTopSupporters(
  * Default: last 20.
  */
 export async function getRecentTips(creatorId: string, limit = 20) {
-  return db.tip.findMany({
+  const key = `analytics:recent:${creatorId}:${limit}`;
+  const cached = await cacheGet<Awaited<ReturnType<typeof db.tip.findMany>>>(key);
+  if (cached) return cached;
+
+  const result = await db.tip.findMany({
     where:   { creatorId },
     orderBy: { ledgerAt: "desc" },
     take:    limit,
@@ -213,4 +217,8 @@ export async function getRecentTips(creatorId: string, limit = 20) {
       ledgerAt:    true,
     },
   });
+
+  // Short TTL keeps the live feed responsive; the dashboard polls every 15 s.
+  await cacheSet(key, result, CACHE_TTL);
+  return result;
 }
