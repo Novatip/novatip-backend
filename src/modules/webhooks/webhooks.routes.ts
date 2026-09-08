@@ -46,7 +46,10 @@ export const webhookRoutes: FastifyPluginAsync = async (app) => {
   app.delete("/:id", async (request, reply) => {
     const { user } = request;
     const { id } = request.params as { id: string };
-    await deleteWebhook(user.sub, id);
+    const deleted = await deleteWebhook(user.sub, id);
+    if (!deleted) {
+      return reply.status(404).send({ error: "Webhook not found" });
+    }
     return reply.status(204).send();
   });
 };
