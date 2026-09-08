@@ -138,6 +138,12 @@ export async function listWebhooks(creatorId: string) {
   });
 }
 
-export async function deleteWebhook(creatorId: string, webhookId: string) {
-  await db.webhook.deleteMany({ where: { id: webhookId, creatorId } });
+export async function deleteWebhook(
+  creatorId: string,
+  webhookId: string,
+): Promise<boolean> {
+  const { count } = await db.webhook.deleteMany({
+    where: { id: webhookId, creatorId },
+  });
+  return count > 0;
 }
