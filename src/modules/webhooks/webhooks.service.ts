@@ -16,8 +16,8 @@ import { logger } from "../../utils/logger.js";
 
 const webhookLogger = logger.child({ component: "webhook" });
 
-const TIMEOUT_MS    = 5_000;
-const MAX_BODY_SIZE = 1_024;   // truncate response log to 1 KB
+const TIMEOUT_MS = 5_000;
+const MAX_BODY_SIZE = 1_024; // truncate response log to 1 KB
 const MAX_PAYLOAD_SIZE = 2_048; // bound stored delivery payload to 2 KB
 
 /**
@@ -31,8 +31,11 @@ function boundPayload(payload: WebhookPayload, limit: number): object {
   if (Buffer.byteLength(json, "utf8") <= limit) return payload as object;
 
   // Truncate message first — it is the largest variable field.
-  const truncated: WebhookPayload = { ...payload, message: payload.message.slice(0, 200) + "…" };
-  let reduced = JSON.stringify(truncated);
+  const truncated: WebhookPayload = {
+    ...payload,
+    message: payload.message.slice(0, 200) + "…",
+  };
+  const reduced = JSON.stringify(truncated);
   if (Buffer.byteLength(reduced, "utf8") <= limit) return truncated as object;
 
   // Still too large — strip amountRaw as well.
@@ -43,13 +46,13 @@ function boundPayload(payload: WebhookPayload, limit: number): object {
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface WebhookPayload {
-  event:     "tip.received";
-  jarId:     string;
-  from:      string;
-  amount:    string;   // human-readable USDC, e.g. "2.50"
-  amountRaw: string;   // stroops as string
-  message:   string;
-  ledger:    number;
+  event: "tip.received";
+  jarId: string;
+  from: string;
+  amount: string; // human-readable USDC, e.g. "2.50"
+  amountRaw: string; // stroops as string
+  message: string;
+  ledger: number;
   timestamp: string;
 }
 
@@ -62,20 +65,20 @@ interface WebhookPayload {
  */
 export async function dispatchWebhooks(event: TipEvent): Promise<void> {
   const creator = await db.creator.findUnique({
-    where:   { jarId: event.jarId },
+    where: { jarId: event.jarId },
     include: { webhooks: { where: { enabled: true } } },
   });
 
   if (!creator || creator.webhooks.length === 0) return;
 
   const payload: WebhookPayload = {
-    event:     "tip.received",
-    jarId:     event.jarId,
-    from:      event.from,
-    amount:    stroopsToUsdc(event.amount),
+    event: "tip.received",
+    jarId: event.jarId,
+    from: event.from,
+    amount: stroopsToUsdc(event.amount),
     amountRaw: event.amount.toString(),
-    message:   event.message,
-    ledger:    event.ledger,
+    message: event.message,
+    ledger: event.ledger,
     timestamp: event.timestamp,
   };
 
@@ -102,22 +105,22 @@ async function deliver(
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
     const res = await fetch(webhook.url, {
-      method:  "POST",
+      method: "POST",
       headers: {
-        "Content-Type":        "application/json",
+        "Content-Type": "application/json",
         "X-Novatip-Signature": `sha256=${signature}`,
-        "User-Agent":          "Novatip-Webhook/1.0",
+        "User-Agent": "Novatip-Webhook/1.0",
       },
       body,
       signal: controller.signal,
     }).finally(() => clearTimeout(timer));
 
-    statusCode   = res.status;
+    statusCode = res.status;
     responseText = (await res.text()).slice(0, MAX_BODY_SIZE);
-    success      = res.ok;
+    success = res.ok;
   } catch (err) {
     responseText = String(err).slice(0, MAX_BODY_SIZE);
-    success      = false;
+    success = false;
   }
 
   // Record delivery attempt
@@ -126,11 +129,11 @@ async function deliver(
     // failed to connect genuinely has neither, and NULL records that honestly.
     // An explicit undefined is also rejected under exactOptionalPropertyTypes.
     data: {
-      webhookId:  webhook.id,
+      webhookId: webhook.id,
       statusCode: statusCode ?? null,
       success,
-      payload:    payload as object,
-      response:   responseText ?? null,
+      payload: payload as object,
+      response: responseText ?? null,
     },
   });
 
@@ -148,16 +151,20 @@ function sign(body: string, secret: string): string {
 
 // ── CRUD (creator manages their own webhooks) ─────────────────────────────────
 
-export async function createWebhook(creatorId: string, url: string, secret: string) {
+export async function createWebhook(
+  creatorId: string,
+  url: string,
+  secret: string,
+) {
   return db.webhook.create({ data: { creatorId, url, secret } });
 }
 
 export async function listWebhooks(creatorId: string, limit = 50, offset = 0) {
   return db.webhook.findMany({
-    where:  { creatorId },
+    where: { creatorId },
     orderBy: { createdAt: "desc" },
-    take:   limit,
-    skip:   offset,
+    take: limit,
+    skip: offset,
     select: { id: true, url: true, enabled: true, createdAt: true },
   });
 }

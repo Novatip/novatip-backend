@@ -20,7 +20,8 @@ import { generateChallenge, verifyChallenge } from "./auth.service.js";
  * This dedicated limiter enforces a much tighter per-IP cap. The limit is
  * configurable via AUTH_CHALLENGE_RATE_LIMIT (default 5 req/min per IP).
  */
-const AUTH_CHALLENGE_RATE_LIMIT = Number(process.env.AUTH_CHALLENGE_RATE_LIMIT) || 5;
+const AUTH_CHALLENGE_RATE_LIMIT =
+  Number(process.env.AUTH_CHALLENGE_RATE_LIMIT) || 5;
 
 interface SlidingWindow {
   count: number;
@@ -62,27 +63,29 @@ const ChallengeBody = z.object({
 
 const VerifyBody = z.object({
   walletAddress: z.string().min(56).max(56),
-  signatureHex:  z.string().length(128),   // 64-byte sig → 128 hex chars
+  signatureHex: z.string().length(128), // 64-byte sig → 128 hex chars
 });
 
 export const authRoutes: FastifyPluginAsync = async (app) => {
   // ── POST /challenge ────────────────────────────────────────────────────────
+  // Applied per-route via onRequest below rather than as a plugin-wide hook, so
+  // it covers the challenge endpoint only. /verify is protected by the nonce
+  // being single-use, and /me by the JWT.
   const challengeLimiter = buildSlidingWindowLimiter(AUTH_CHALLENGE_RATE_LIMIT);
-  app.addHook("preHandler", challengeLimiter, async (request, reply) => {
-    if (request.method !== "POST" || !request.url.startsWith("/challenge")) {
-      return;
-    }
-  });
 
-  app.post("/challenge", { onRequest: [challengeLimiter] }, async (request, reply) => {
-    const body = ChallengeBody.safeParse(request.body);
-    if (!body.success) {
-      return reply.status(400).send({ error: body.error.flatten() });
-    }
+  app.post(
+    "/challenge",
+    { onRequest: [challengeLimiter] },
+    async (request, reply) => {
+      const body = ChallengeBody.safeParse(request.body);
+      if (!body.success) {
+        return reply.status(400).send({ error: body.error.flatten() });
+      }
 
-    const nonce = await generateChallenge(body.data.walletAddress);
-    return reply.send({ nonce });
-  });
+      const nonce = await generateChallenge(body.data.walletAddress);
+      return reply.send({ nonce });
+    },
+  );
 
   // ── POST /verify ───────────────────────────────────────────────────────────
   app.post("/verify", async (request, reply) => {
@@ -101,11 +104,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // ── GET /me ────────────────────────────────────────────────────────────────
-  app.get(
-    "/me",
-    { onRequest: [app.authenticate] },
-    async (request, reply) => {
-      return reply.send({ user: request.user });
-    },
-  );
+  app.get("/me", { onRequest: [app.authenticate] }, async (request, reply) => {
+    return reply.send({ user: request.user });
+  });
 };

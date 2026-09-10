@@ -1,42 +1,72 @@
-import { cacheGet } from './redis';
-import { redis } from './redis'; // or your Redis client module
+/**
+ * redis.test.ts
+ *
+ * Unit tests for cacheGet's corrupt-entry handling.
+ *
+ * ioredis is mocked with an in-memory store so this runs without a Redis
+ * server: the behaviour under test is cacheGet's own error handling, not the
+ * client's. config.ts validates required env vars at module load, so those are
+ * set before the module graph is imported.
+ */
 
-describe('cacheGet', () => {
-  const testKey = 'test-corrupt-entry';
+import { jest } from "@jest/globals";
+
+process.env["DATABASE_URL"] ??= "postgresql://user:pass@localhost:5432/test";
+process.env["JWT_SECRET"] ??= "test-secret-not-used-for-signing";
+process.env["TIP_SPLITTER_CONTRACT_ID"] ??= `C${"A".repeat(55)}`;
+
+const store = new Map<string, string>();
+
+const mockClient = {
+  get: async (key: string): Promise<string | null> => store.get(key) ?? null,
+  set: async (key: string, value: string): Promise<"OK"> => {
+    store.set(key, value);
+    return "OK";
+  },
+  del: async (key: string): Promise<number> => (store.delete(key) ? 1 : 0),
+  on: () => undefined,
+  quit: async (): Promise<"OK"> => "OK",
+};
+
+jest.unstable_mockModule("ioredis", () => ({
+  Redis: function Redis() {
+    return mockClient;
+  },
+  default: function Redis() {
+    return mockClient;
+  },
+}));
+
+const { cacheGet, cacheSet } = await import("../redis.js");
+
+describe("cacheGet", () => {
+  const testKey = "test-corrupt-entry";
   const fullKey = `cache:${testKey}`;
 
-  afterEach(async () => {
-    await redis.del(fullKey);
-    jest.restoreAllMocks();
+  beforeEach(() => store.clear());
+
+  it("returns the parsed value for a valid entry", async () => {
+    const data = { id: 123, name: "Alice" };
+    await cacheSet(testKey, data, 60);
+
+    await expect(cacheGet<typeof data>(testKey)).resolves.toEqual(data);
   });
 
-  it('should return parsed data for a valid cache entry', async () => {
-    const data = { id: 123, name: 'Alice' };
-    await redis.set(fullKey, JSON.stringify(data));
-
-    const result = await cacheGet<{ id: number; name: string }>(testKey);
-    expect(result).toEqual(data);
+  it("returns null on a miss", async () => {
+    await expect(cacheGet("never-written")).resolves.toBeNull();
   });
 
-  it('should handle malformed JSON safely by logging, deleting the key, and returning null', async () => {
-    // 1. Seed a corrupted JSON entry in Redis
-    const corruptedValue = '{ "id": 123, "name": invalid_json ';
-    await redis.set(fullKey, corruptedValue);
+  it("treats a corrupt entry as a miss rather than throwing", async () => {
+    store.set(fullKey, '{ "id": 123, "name": invalid_json ');
 
-    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    await expect(cacheGet(testKey)).resolves.toBeNull();
+  });
 
-    // 2. Call cacheGet — should NOT throw
-    const result = await cacheGet(testKey);
+  it("evicts a corrupt entry so the next read repopulates it", async () => {
+    store.set(fullKey, "not json at all");
 
-    // 3. Verify acceptance criteria
-    expect(result).toBeNull();
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining(`Failed to parse cached JSON for key "${fullKey}"`),
-      expect.any(Error)
-    );
+    await cacheGet(testKey);
 
-    // 4. Verify the corrupted key was evicted from Redis
-    const remainingKey = await redis.get(fullKey);
-    expect(remainingKey).toBeNull();
+    expect(store.has(fullKey)).toBe(false);
   });
 });

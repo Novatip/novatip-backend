@@ -26,9 +26,13 @@ import { isValidAccountId } from "@novatip/sdk";
  * Generate a random nonce and store it in Redis against the wallet address.
  * The nonce expires after 5 minutes (enforced by Redis TTL).
  */
-export async function generateChallenge(walletAddress: string): Promise<string> {
+export async function generateChallenge(
+  walletAddress: string,
+): Promise<string> {
   if (!isValidAccountId(walletAddress)) {
-    throw Object.assign(new Error("Invalid Stellar account address."), { statusCode: 400 });
+    throw Object.assign(new Error("Invalid Stellar account address."), {
+      statusCode: 400,
+    });
   }
 
   const nonce = randomBytes(32).toString("hex");
@@ -37,6 +41,16 @@ export async function generateChallenge(walletAddress: string): Promise<string> 
 }
 
 // ── Verify ────────────────────────────────────────────────────────────────────
+
+/**
+ * Claims embedded in a creator session token. Must stay in step with the
+ * FastifyJWT payload augmentation in src/types/fastify.d.ts.
+ */
+export interface SessionClaims {
+  sub: string;
+  wallet: string;
+  slug: string;
+}
 
 export interface VerifyResult {
   jwt: string;
@@ -52,10 +66,12 @@ export interface VerifyResult {
 export async function verifyChallenge(
   walletAddress: string,
   signatureHex: string,
-  signJwt: (payload: object) => string,
+  signJwt: (payload: SessionClaims) => string,
 ): Promise<VerifyResult> {
   if (!isValidAccountId(walletAddress)) {
-    throw Object.assign(new Error("Invalid Stellar account address."), { statusCode: 400 });
+    throw Object.assign(new Error("Invalid Stellar account address."), {
+      statusCode: 400,
+    });
   }
 
   // Retrieve and consume the nonce (single-use)
@@ -75,7 +91,9 @@ export async function verifyChallenge(
   // Verify Ed25519 signature
   const valid = verifyEd25519(nonce, signatureHex, publicKey);
   if (!valid) {
-    throw Object.assign(new Error("Signature verification failed."), { statusCode: 401 });
+    throw Object.assign(new Error("Signature verification failed."), {
+      statusCode: 401,
+    });
   }
 
   // Upsert creator record (wallet address is the identity anchor)
@@ -93,7 +111,9 @@ export async function verifyChallenge(
     });
   }
 
-  const creator = await db.creator.findUniqueOrThrow({ where: { walletAddress } });
+  const creator = await db.creator.findUniqueOrThrow({
+    where: { walletAddress },
+  });
 
   const token = signJwt({
     sub: creator.id,
@@ -116,7 +136,7 @@ function verifyEd25519(
   publicKey: Buffer,
 ): boolean {
   try {
-    const message   = Buffer.from(nonce, "utf8");
+    const message = Buffer.from(nonce, "utf8");
     const signature = Buffer.from(signatureHex, "hex");
 
     if (publicKey.length !== 32) return false;
