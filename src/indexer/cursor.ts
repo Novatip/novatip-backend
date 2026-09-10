@@ -105,8 +105,14 @@ export function planBatch<T extends LedgerBound>(
     return { toProcess: [], nextStartLedger: startLedger, cursorLedger: null };
   }
 
-  const maxLedger = events.reduce((max, e) => (e.ledger > max ? e.ledger : max), events[0]!.ledger);
-  const minLedger = events.reduce((min, e) => (e.ledger < min ? e.ledger : min), events[0]!.ledger);
+  const maxLedger = events.reduce(
+    (max, e) => (e.ledger > max ? e.ledger : max),
+    events[0]!.ledger,
+  );
+  const minLedger = events.reduce(
+    (min, e) => (e.ledger < min ? e.ledger : min),
+    events[0]!.ledger,
+  );
 
   // Short batch: the RPC returned everything it had, so `maxLedger` is complete
   // and the loop can move past it.
@@ -139,8 +145,12 @@ export function planBatch<T extends LedgerBound>(
 }
 
 /** True when `planBatch` had to give up on paging within a single ledger. */
-export function isSaturatedLedger<T extends LedgerBound>(events: T[], limit: number): boolean {
+export function isSaturatedLedger<T extends LedgerBound>(
+  events: T[],
+  limit: number,
+): boolean {
   return (
-    events.length >= limit && events.every((e) => e.ledger === events[0]!.ledger)
+    events.length >= limit &&
+    events.every((e) => e.ledger === events[0]!.ledger)
   );
 }

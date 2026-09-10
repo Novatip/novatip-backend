@@ -44,20 +44,20 @@ export async function sendTipNotification(event: TipEvent): Promise<void> {
     return;
   }
 
-  const amount      = formatUsdc(event.amount, 2);
+  const amount = formatUsdc(event.amount, 2);
   const displayName = creator.displayName ?? creator.slug;
-  const message     = event.message ? `"${event.message}"` : "No message left.";
+  const message = event.message ? `"${event.message}"` : "No message left.";
 
   try {
     // Dynamic import so Resend is only loaded when the API key is set
     const { Resend } = await import("resend");
-    const resend     = new Resend(config.resend.apiKey);
+    const resend = new Resend(config.resend.apiKey);
 
     // Resend reports API failures via the returned `error` rather than by
     // throwing, so the catch below never sees them — check it explicitly.
     const { error } = await resend.emails.send({
-      from:    config.resend.from,
-      to:      [creator.email],
+      from: config.resend.from,
+      to: [creator.email],
       subject: `💸 You received $${amount} USDC on Novatip!`,
       html: `
         <h2>Hey ${displayName}!</h2>
@@ -80,12 +80,12 @@ export async function sendTipNotification(event: TipEvent): Promise<void> {
     await db.notification.create({
       data: {
         creatorId: creator.id,
-        type:      "TIP_RECEIVED",
-        payload:   {
-          from:      event.from,
-          amount:    event.amount.toString(),
-          message:   event.message,
-          ledger:    event.ledger,
+        type: "TIP_RECEIVED",
+        payload: {
+          from: event.from,
+          amount: event.amount.toString(),
+          message: event.message,
+          ledger: event.ledger,
           timestamp: event.timestamp,
         },
         sentAt: new Date(),

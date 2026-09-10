@@ -5,7 +5,11 @@
  * All plugins, route registration, and lifecycle hooks live here.
  */
 
-import Fastify, { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
+import Fastify, {
+  FastifyInstance,
+  FastifyRequest,
+  FastifyReply,
+} from "fastify";
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import jwt from "@fastify/jwt";
@@ -24,7 +28,9 @@ export async function buildServer(): Promise<FastifyInstance> {
       // utils/logger.ts about exactOptionalPropertyTypes.
       ...(isProduction
         ? {}
-        : { transport: { target: "pino-pretty", options: { colorize: true } } }),
+        : {
+            transport: { target: "pino-pretty", options: { colorize: true } },
+          }),
     },
   });
 
@@ -66,24 +72,32 @@ export async function buildServer(): Promise<FastifyInstance> {
     async (app) => {
       // Simple health check — kept for backward compatibility. Richer
       // liveness/readiness probes live under /health (see healthRoutes).
-      app.get("/health", async () => ({ status: "ok", ts: new Date().toISOString() }));
+      app.get("/health", async () => ({
+        status: "ok",
+        ts: new Date().toISOString(),
+      }));
 
       // Feature routes registered in subsequent commits
-      const { healthRoutes }   = await import("./modules/health/health.routes.js");
-      const { authRoutes }     = await import("./modules/auth/auth.routes.js");
-      const { creatorRoutes }  = await import("./modules/creator/creator.routes.js");
-      const { qrRoutes }       = await import("./modules/qr/qr.routes.js");
-      const { resolverRoutes } = await import("./modules/resolver/resolver.routes.js");
-      const { analyticsRoutes }= await import("./modules/analytics/analytics.routes.js");
-      const { webhookRoutes }  = await import("./modules/webhooks/webhooks.routes.js");
+      const { healthRoutes } =
+        await import("./modules/health/health.routes.js");
+      const { authRoutes } = await import("./modules/auth/auth.routes.js");
+      const { creatorRoutes } =
+        await import("./modules/creator/creator.routes.js");
+      const { qrRoutes } = await import("./modules/qr/qr.routes.js");
+      const { resolverRoutes } =
+        await import("./modules/resolver/resolver.routes.js");
+      const { analyticsRoutes } =
+        await import("./modules/analytics/analytics.routes.js");
+      const { webhookRoutes } =
+        await import("./modules/webhooks/webhooks.routes.js");
 
-      await app.register(healthRoutes,    { prefix: "/health" });
-      await app.register(authRoutes,      { prefix: "/auth" });
-      await app.register(creatorRoutes,   { prefix: "/creators" });
-      await app.register(qrRoutes,        { prefix: "/qr" });
-      await app.register(resolverRoutes,  { prefix: "/resolve" });
+      await app.register(healthRoutes, { prefix: "/health" });
+      await app.register(authRoutes, { prefix: "/auth" });
+      await app.register(creatorRoutes, { prefix: "/creators" });
+      await app.register(qrRoutes, { prefix: "/qr" });
+      await app.register(resolverRoutes, { prefix: "/resolve" });
       await app.register(analyticsRoutes, { prefix: "/analytics" });
-      await app.register(webhookRoutes,   { prefix: "/webhooks" });
+      await app.register(webhookRoutes, { prefix: "/webhooks" });
     },
     { prefix: "/api/v1" },
   );

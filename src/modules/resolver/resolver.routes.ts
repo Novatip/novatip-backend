@@ -19,7 +19,6 @@ import { getCreatorBySlug } from "../creator/creator.service.js";
 import { config } from "../../config.js";
 
 export const resolverRoutes: FastifyPluginAsync = async (app) => {
-
   app.get("/:slug", async (request, reply) => {
     const { slug } = request.params as { slug: string };
 
@@ -27,7 +26,7 @@ export const resolverRoutes: FastifyPluginAsync = async (app) => {
 
     return reply.send({
       creator,
-      tipUrl:   `${config.appBaseUrl}/${slug}`,
+      tipUrl: `${config.appBaseUrl}/${slug}`,
       qrSvgUrl: `/api/v1/qr/${slug}`,
       qrPngUrl: `/api/v1/qr/${slug}/png`,
     });

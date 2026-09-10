@@ -11,16 +11,16 @@ import { db } from "../../db.js";
 import { redis } from "../../redis.js";
 
 export interface DependencyStatus {
-  status:    "up" | "down";
+  status: "up" | "down";
   latencyMs: number;
-  error?:    string;
+  error?: string;
 }
 
 export interface ReadinessReport {
   status: "ok" | "degraded";
   checks: {
     database: DependencyStatus;
-    redis:    DependencyStatus;
+    redis: DependencyStatus;
   };
 }
 
@@ -35,9 +35,9 @@ async function timed(probe: () => Promise<void>): Promise<DependencyStatus> {
     return { status: "up", latencyMs: Date.now() - start };
   } catch (err) {
     return {
-      status:    "down",
+      status: "down",
       latencyMs: Date.now() - start,
-      error:     err instanceof Error ? err.message : String(err),
+      error: err instanceof Error ? err.message : String(err),
     };
   }
 }
@@ -66,7 +66,10 @@ export async function checkRedis(): Promise<DependencyStatus> {
  * parallel; the instance is `ok` only when all dependencies are `up`.
  */
 export async function getReadiness(): Promise<ReadinessReport> {
-  const [database, redisCheck] = await Promise.all([checkDatabase(), checkRedis()]);
+  const [database, redisCheck] = await Promise.all([
+    checkDatabase(),
+    checkRedis(),
+  ]);
   const allUp = database.status === "up" && redisCheck.status === "up";
 
   return {

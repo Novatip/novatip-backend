@@ -8,7 +8,11 @@
 
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { createWebhook, listWebhooks, deleteWebhook } from "./webhooks.service.js";
+import {
+  createWebhook,
+  listWebhooks,
+  deleteWebhook,
+} from "./webhooks.service.js";
 import { randomBytes } from "crypto";
 
 const CreateBody = z.object({
@@ -25,8 +29,16 @@ export const webhookRoutes: FastifyPluginAsync = async (app) => {
     const { user } = request;
     const query = z
       .object({
-        limit: z.string().regex(/^[0-9]+$/).transform(Number).optional(),
-        offset: z.string().regex(/^[0-9]+$/).transform(Number).optional(),
+        limit: z
+          .string()
+          .regex(/^[0-9]+$/)
+          .transform(Number)
+          .optional(),
+        offset: z
+          .string()
+          .regex(/^[0-9]+$/)
+          .transform(Number)
+          .optional(),
       })
       .safeParse(request.query);
     if (!query.success) {

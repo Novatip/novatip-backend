@@ -104,8 +104,8 @@ describe("httpsUrl", () => {
     const cases = [
       "",
       "not-a-url",
-      "//cdn.example.com/avatar.png",  // protocol-relative
-      "cdn.example.com/avatar.png",    // no scheme
+      "//cdn.example.com/avatar.png", // protocol-relative
+      "cdn.example.com/avatar.png", // no scheme
     ];
 
     test.each(cases)("rejects %s", (url) => {

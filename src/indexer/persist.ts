@@ -15,7 +15,10 @@ import { db } from "../db.js";
  * @param event     - Decoded TipEvent from the SDK event parser
  * @param txHash    - Soroban transaction hash (used as idempotency key)
  */
-export async function persistTip(event: TipEvent, txHash: string): Promise<void> {
+export async function persistTip(
+  event: TipEvent,
+  txHash: string,
+): Promise<void> {
   // Resolve creator by jarId
   const creator = await db.creator.findUnique({
     where: { jarId: event.jarId },
@@ -27,16 +30,16 @@ export async function persistTip(event: TipEvent, txHash: string): Promise<void>
   }
 
   await db.tip.upsert({
-    where:  { txHash },
+    where: { txHash },
     update: {}, // already persisted — no-op
     create: {
       txHash,
-      ledger:      event.ledger,
-      ledgerAt:    new Date(event.timestamp),
+      ledger: event.ledger,
+      ledgerAt: new Date(event.timestamp),
       fromAddress: event.from,
-      amount:      event.amount.toString(),
-      message:     event.message,
-      creatorId:   creator.id,
+      amount: event.amount.toString(),
+      message: event.message,
+      creatorId: creator.id,
     },
   });
 }
@@ -47,7 +50,7 @@ export async function persistTip(event: TipEvent, txHash: string): Promise<void>
  */
 export async function updateCursor(ledger: number): Promise<void> {
   await db.indexerCursor.upsert({
-    where:  { id: 1 },
+    where: { id: 1 },
     update: { lastLedger: ledger },
     create: { id: 1, lastLedger: ledger },
   });

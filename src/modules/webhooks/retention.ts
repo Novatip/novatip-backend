@@ -39,9 +39,9 @@ const FIRST_RUN_DELAY_MS = 60_000;
 
 export interface PruneResult {
   deletedSuccesses: number;
-  deletedFailures:  number;
+  deletedFailures: number;
   /** True when the batch ceiling was hit with rows still outstanding. */
-  truncated:        boolean;
+  truncated: boolean;
 }
 
 /** The timestamp before which rows of a given age are eligible for deletion. */
@@ -73,9 +73,9 @@ async function pruneOlderThan(
 
   while (batchesUsed < maxBatches) {
     const rows = await db.webhookDelivery.findMany({
-      where:  { success, attemptedAt: { lt: cutoff } },
+      where: { success, attemptedAt: { lt: cutoff } },
       select: { id: true },
-      take:   batchSize,
+      take: batchSize,
     });
 
     if (rows.length === 0) return { deleted, batchesUsed, done: true };
@@ -84,7 +84,7 @@ async function pruneOlderThan(
       where: { id: { in: rows.map((row) => row.id) } },
     });
 
-    deleted     += count;
+    deleted += count;
     batchesUsed += 1;
 
     // A short page means the predicate is exhausted.
@@ -98,14 +98,16 @@ async function pruneOlderThan(
  * Run one retention pass. Safe to call directly (a manual backfill, a test)
  * as well as from the scheduler.
  */
-export async function pruneWebhookDeliveries(now: Date = new Date()): Promise<PruneResult> {
+export async function pruneWebhookDeliveries(
+  now: Date = new Date(),
+): Promise<PruneResult> {
   const { successDays, failureDays, batchSize } = config.webhooks.retention;
 
-  let budget    = MAX_BATCHES_PER_RUN;
+  let budget = MAX_BATCHES_PER_RUN;
   let truncated = false;
 
   let deletedSuccesses = 0;
-  let deletedFailures  = 0;
+  let deletedFailures = 0;
 
   if (successDays > 0 && budget > 0) {
     const result = await pruneOlderThan(
@@ -115,8 +117,8 @@ export async function pruneWebhookDeliveries(now: Date = new Date()): Promise<Pr
       budget,
     );
     deletedSuccesses = result.deleted;
-    budget          -= result.batchesUsed;
-    truncated        = truncated || !result.done;
+    budget -= result.batchesUsed;
+    truncated = truncated || !result.done;
   }
 
   if (failureDays > 0 && budget > 0) {
@@ -127,8 +129,8 @@ export async function pruneWebhookDeliveries(now: Date = new Date()): Promise<Pr
       budget,
     );
     deletedFailures = result.deleted;
-    budget         -= result.batchesUsed;
-    truncated       = truncated || !result.done;
+    budget -= result.batchesUsed;
+    truncated = truncated || !result.done;
   }
 
   return { deletedSuccesses, deletedFailures, truncated };
@@ -149,11 +151,14 @@ export function startDeliveryPruner(): void {
   if (pruneTimer !== null || pruneActive) return;
 
   if (!retentionEnabled()) {
-    retentionLogger.info("retention disabled — webhook deliveries are kept indefinitely");
+    retentionLogger.info(
+      "retention disabled — webhook deliveries are kept indefinitely",
+    );
     return;
   }
 
-  const { successDays, failureDays, intervalMinutes, batchSize } = config.webhooks.retention;
+  const { successDays, failureDays, intervalMinutes, batchSize } =
+    config.webhooks.retention;
 
   retentionLogger.info(
     { successDays, failureDays, intervalMinutes, batchSize },
@@ -188,14 +193,14 @@ async function runPrune(): Promise<void> {
 
   try {
     const result = await pruneWebhookDeliveries();
-    const total  = result.deletedSuccesses + result.deletedFailures;
+    const total = result.deletedSuccesses + result.deletedFailures;
 
     if (total > 0) {
       retentionLogger.info(
         {
           deletedSuccesses: result.deletedSuccesses,
-          deletedFailures:  result.deletedFailures,
-          truncated:        result.truncated,
+          deletedFailures: result.deletedFailures,
+          truncated: result.truncated,
         },
         result.truncated
           ? "pruned webhook deliveries — batch ceiling reached, continuing next run"

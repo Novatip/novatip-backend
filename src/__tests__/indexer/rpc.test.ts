@@ -35,7 +35,11 @@ afterAll(() => {
 describe("fetchLatestLedger", () => {
   it("returns the ledger sequence", async () => {
     mockFetch.mockResolvedValue(
-      jsonResponse({ jsonrpc: "2.0", id: 1, result: { id: "abc", sequence: 1_234 } }),
+      jsonResponse({
+        jsonrpc: "2.0",
+        id: 1,
+        result: { id: "abc", sequence: 1_234 },
+      }),
     );
 
     await expect(fetchLatestLedger(RPC_URL)).resolves.toBe(1_234);
@@ -66,19 +70,25 @@ describe("fetchLatestLedger", () => {
       jsonResponse({ error: { code: -32601, message: "method not found" } }),
     );
 
-    await expect(fetchLatestLedger(RPC_URL)).rejects.toThrow("method not found");
+    await expect(fetchLatestLedger(RPC_URL)).rejects.toThrow(
+      "method not found",
+    );
   });
 
   it("throws when the response carries no sequence", async () => {
     mockFetch.mockResolvedValue(jsonResponse({ result: {} }));
 
-    await expect(fetchLatestLedger(RPC_URL)).rejects.toThrow("no ledger sequence");
+    await expect(fetchLatestLedger(RPC_URL)).rejects.toThrow(
+      "no ledger sequence",
+    );
   });
 
   it("throws rather than returning a non-numeric sequence", async () => {
     mockFetch.mockResolvedValue(jsonResponse({ result: { sequence: "1234" } }));
 
-    await expect(fetchLatestLedger(RPC_URL)).rejects.toThrow("no ledger sequence");
+    await expect(fetchLatestLedger(RPC_URL)).rejects.toThrow(
+      "no ledger sequence",
+    );
   });
 
   it("propagates a network failure", async () => {

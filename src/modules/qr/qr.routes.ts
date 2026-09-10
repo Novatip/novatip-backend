@@ -99,7 +99,10 @@ export const qrRoutes: FastifyPluginAsync = async (app) => {
 
     return reply
       .header("Content-Type", "image/png")
-      .header("Content-Disposition", `attachment; filename="novatip-${slug}.png"`)
+      .header(
+        "Content-Disposition",
+        `attachment; filename="novatip-${slug}.png"`,
+      )
       .header("Cache-Control", "public, max-age=3600")
       .send(pngBuffer);
   });

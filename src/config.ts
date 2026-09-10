@@ -43,10 +43,14 @@ export const config = {
   jwtSecret: require("JWT_SECRET"),
 
   stellar: {
-    network: optional("STELLAR_NETWORK", "testnet") as "testnet" | "mainnet" | "local",
+    network: optional("STELLAR_NETWORK", "testnet") as
+      "testnet" | "mainnet" | "local",
     rpcUrl: optional("SOROBAN_RPC_URL", "https://soroban-testnet.stellar.org"),
     horizonUrl: optional("HORIZON_URL", "https://horizon-testnet.stellar.org"),
-    passphrase: optional("NETWORK_PASSPHRASE", "Test SDF Network ; September 2015"),
+    passphrase: optional(
+      "NETWORK_PASSPHRASE",
+      "Test SDF Network ; September 2015",
+    ),
     tipSplitterContractId: require("TIP_SPLITTER_CONTRACT_ID"),
     usdcContractId: optional(
       "USDC_CONTRACT_ID",
@@ -70,7 +74,10 @@ export const config = {
       /** Rows deleted per statement, so a large backlog never locks the table. */
       batchSize: optionalInt("WEBHOOK_DELIVERY_PRUNE_BATCH_SIZE", 500),
       /** How often the pruner wakes up. */
-      intervalMinutes: optionalInt("WEBHOOK_DELIVERY_PRUNE_INTERVAL_MINUTES", 60),
+      intervalMinutes: optionalInt(
+        "WEBHOOK_DELIVERY_PRUNE_INTERVAL_MINUTES",
+        60,
+      ),
     },
   },
 

@@ -32,7 +32,7 @@ const shutdown = async (): Promise<void> => {
 };
 
 process.on("SIGTERM", shutdown);
-process.on("SIGINT",  shutdown);
+process.on("SIGINT", shutdown);
 
 try {
   await server.listen({ port: config.port, host: config.host });

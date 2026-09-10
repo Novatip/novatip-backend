@@ -61,20 +61,25 @@ describe("resolveJarId", () => {
       expect(() => resolveJarId(slug, jarId)).toThrow();
     });
 
-    test.each(mismatches)("rejects %s with a 400, not a 500", (_label, slug, jarId) => {
-      // claimSlug's callers surface thrown errors through the global handler,
-      // which falls back to 500 for anything without a statusCode. A bad
-      // request from the client must not read as a server fault.
-      try {
-        resolveJarId(slug, jarId);
-        throw new Error("expected resolveJarId to throw");
-      } catch (err) {
-        expect(err).toHaveProperty("statusCode", 400);
-      }
-    });
+    test.each(mismatches)(
+      "rejects %s with a 400, not a 500",
+      (_label, slug, jarId) => {
+        // claimSlug's callers surface thrown errors through the global handler,
+        // which falls back to 500 for anything without a statusCode. A bad
+        // request from the client must not read as a server fault.
+        try {
+          resolveJarId(slug, jarId);
+          throw new Error("expected resolveJarId to throw");
+        } catch (err) {
+          expect(err).toHaveProperty("statusCode", 400);
+        }
+      },
+    );
 
     test("names the expected jarId so the client can correct itself", () => {
-      expect(() => resolveJarId("alice", "@bob")).toThrow('jarId must be "@alice"');
+      expect(() => resolveJarId("alice", "@bob")).toThrow(
+        'jarId must be "@alice"',
+      );
     });
   });
 

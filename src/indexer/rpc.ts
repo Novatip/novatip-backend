@@ -27,10 +27,10 @@ export async function fetchLatestLedger(rpcUrl: string): Promise<number> {
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
   const res = await fetch(rpcUrl, {
-    method:  "POST",
+    method: "POST",
     headers: { "Content-Type": "application/json" },
-    body:    JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getLatestLedger" }),
-    signal:  controller.signal,
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getLatestLedger" }),
+    signal: controller.signal,
   }).finally(() => clearTimeout(timer));
 
   if (!res.ok) {
@@ -40,7 +40,9 @@ export async function fetchLatestLedger(rpcUrl: string): Promise<number> {
   const body = (await res.json()) as LatestLedgerResponse;
 
   if (body.error) {
-    throw new Error(`getLatestLedger failed: ${body.error.message ?? "unknown RPC error"}`);
+    throw new Error(
+      `getLatestLedger failed: ${body.error.message ?? "unknown RPC error"}`,
+    );
   }
 
   const sequence = body.result?.sequence;

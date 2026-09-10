@@ -19,7 +19,7 @@ import {
   getRecentTips,
 } from "./analytics.service.js";
 
-const DaysQuery  = z.coerce.number().int().min(1).max(365).default(30);
+const DaysQuery = z.coerce.number().int().min(1).max(365).default(30);
 const LimitQuery = z.coerce.number().int().min(1).max(100).default(10);
 
 export const analyticsRoutes: FastifyPluginAsync = async (app) => {

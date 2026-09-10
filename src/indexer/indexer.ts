@@ -39,7 +39,7 @@ import { dispatchWebhooks } from "../modules/webhooks/webhooks.service.js";
 import { sendTipNotification } from "../modules/notifications/email.service.js";
 
 const POLL_INTERVAL_MS = 6_000;
-const POLL_LIMIT       = 200;
+const POLL_LIMIT = 200;
 
 const indexerLogger = logger.child({ component: "indexer" });
 
@@ -48,10 +48,10 @@ const indexerLogger = logger.child({ component: "indexer" });
 function resolveNetwork(): NetworkConfig {
   if (config.stellar.rpcUrl) {
     return networkFromEnv({
-      name:           config.stellar.network,
-      rpcUrl:         config.stellar.rpcUrl,
-      horizonUrl:     config.stellar.horizonUrl,
-      passphrase:     config.stellar.passphrase,
+      name: config.stellar.network,
+      rpcUrl: config.stellar.rpcUrl,
+      horizonUrl: config.stellar.horizonUrl,
+      passphrase: config.stellar.passphrase,
       usdcContractId: config.stellar.usdcContractId,
     });
   }
@@ -70,22 +70,18 @@ export async function startIndexer(): Promise<void> {
   if (running) return;
   running = true;
 
-  const network      = resolveNetwork();
-  const contractId   = config.stellar.tipSplitterContractId;
+  const network = resolveNetwork();
+  const contractId = config.stellar.tipSplitterContractId;
 
-  indexerLogger.info(
-    { contractId, network: network.name },
-    "starting",
-  );
+  indexerLogger.info({ contractId, network: network.name }, "starting");
 
   // Determine start ledger: resume from cursor or use env override
-  const savedCursor  = await readCursor();
-  let   startLedger  = savedCursor > 0
-    ? savedCursor + 1
-    : config.stellar.indexerStartLedger;
+  const savedCursor = await readCursor();
+  let startLedger =
+    savedCursor > 0 ? savedCursor + 1 : config.stellar.indexerStartLedger;
 
   // Cursor bookkeeping for quiet periods
-  let persistedCursor  = savedCursor;
+  let persistedCursor = savedCursor;
   let lastIdleCheckAt: number | null = null;
 
   indexerLogger.info({ startLedger }, "resuming from ledger");
@@ -148,7 +144,11 @@ export async function startIndexer(): Promise<void> {
       } else {
         // No tips in this range — advance to chain head so an idle stretch
         // doesn't turn into a backfill on the next restart.
-        const advance = planIdleAdvance(observedHead, startLedger, persistedCursor);
+        const advance = planIdleAdvance(
+          observedHead,
+          startLedger,
+          persistedCursor,
+        );
 
         if (advance) {
           indexerLogger.info(
@@ -157,7 +157,7 @@ export async function startIndexer(): Promise<void> {
           );
 
           await updateCursor(advance.cursorLedger);
-          startLedger     = advance.nextStartLedger;
+          startLedger = advance.nextStartLedger;
           persistedCursor = advance.cursorLedger;
         }
       }

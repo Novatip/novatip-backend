@@ -16,20 +16,20 @@ const CACHE_TTL = 30; // seconds
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface TipTotals {
-  totalTips:      number;
-  totalAmountRaw: string;   // sum as string (i128 precision)
+  totalTips: number;
+  totalAmountRaw: string; // sum as string (i128 precision)
   uniqueSupporters: number;
 }
 
 export interface TimeSeriesPoint {
-  date:      string;   // YYYY-MM-DD
-  tipCount:  number;
+  date: string; // YYYY-MM-DD
+  tipCount: number;
   amountRaw: string;
 }
 
 export interface TopSupporter {
-  fromAddress:  string;
-  tipCount:     number;
+  fromAddress: string;
+  tipCount: number;
   totalAmountRaw: string;
 }
 
@@ -65,8 +65,8 @@ export async function getTotals(creatorId: string): Promise<TipTotals> {
   const row = rows[0];
 
   const result: TipTotals = {
-    totalTips:        Number(row?.totalTips ?? 0n),
-    totalAmountRaw:   row?.totalAmountRaw ?? "0",
+    totalTips: Number(row?.totalTips ?? 0n),
+    totalAmountRaw: row?.totalAmountRaw ?? "0",
     uniqueSupporters: Number(row?.uniqueSupporters ?? 0n),
   };
 
@@ -77,8 +77,8 @@ export async function getTotals(creatorId: string): Promise<TipTotals> {
 // ── Time series ───────────────────────────────────────────────────────────────
 
 interface TimeSeriesRow {
-  date:      Date;
-  tipCount:  bigint;
+  date: Date;
+  tipCount: bigint;
   amountRaw: string;
 }
 
@@ -89,7 +89,9 @@ interface TimeSeriesRow {
  * keeps this in lockstep with the date_trunc('day', "ledgerAt") grouping below.
  */
 function utcMidnight(d: Date): Date {
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  return new Date(
+    Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()),
+  );
 }
 
 /**
@@ -128,7 +130,7 @@ export async function getTimeSeries(
   const byDate = new Map<string, { tipCount: number; amountRaw: string }>();
   for (const row of rows) {
     byDate.set(row.date.toISOString().slice(0, 10), {
-      tipCount:  Number(row.tipCount),
+      tipCount: Number(row.tipCount),
       amountRaw: row.amountRaw,
     });
   }
@@ -142,7 +144,7 @@ export async function getTimeSeries(
 
     result.push({
       date,
-      tipCount:  point?.tipCount ?? 0,
+      tipCount: point?.tipCount ?? 0,
       amountRaw: point?.amountRaw ?? "0",
     });
   }
@@ -154,8 +156,8 @@ export async function getTimeSeries(
 // ── Top supporters ────────────────────────────────────────────────────────────
 
 interface TopSupporterRow {
-  fromAddress:    string;
-  tipCount:       bigint;
+  fromAddress: string;
+  tipCount: bigint;
   totalAmountRaw: string;
 }
 
@@ -184,8 +186,8 @@ export async function getTopSupporters(
   `;
 
   const result: TopSupporter[] = rows.map((row) => ({
-    fromAddress:    row.fromAddress,
-    tipCount:       Number(row.tipCount),
+    fromAddress: row.fromAddress,
+    tipCount: Number(row.tipCount),
     totalAmountRaw: row.totalAmountRaw,
   }));
 
@@ -201,20 +203,21 @@ export async function getTopSupporters(
  */
 export async function getRecentTips(creatorId: string, limit = 20) {
   const key = `analytics:recent:${creatorId}:${limit}`;
-  const cached = await cacheGet<Awaited<ReturnType<typeof db.tip.findMany>>>(key);
+  const cached =
+    await cacheGet<Awaited<ReturnType<typeof db.tip.findMany>>>(key);
   if (cached) return cached;
 
   const result = await db.tip.findMany({
-    where:   { creatorId },
+    where: { creatorId },
     orderBy: { ledgerAt: "desc" },
-    take:    limit,
+    take: limit,
     select: {
-      id:          true,
-      txHash:      true,
+      id: true,
+      txHash: true,
       fromAddress: true,
-      amount:      true,
-      message:     true,
-      ledgerAt:    true,
+      amount: true,
+      message: true,
+      ledgerAt: true,
     },
   });
 

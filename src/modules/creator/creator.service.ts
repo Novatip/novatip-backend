@@ -61,14 +61,14 @@ export const RESERVED_SLUGS: ReadonlySet<string> = new Set([
  * database branches must conform to this type.
  */
 export interface PublicCreator {
-  id:          string;
-  slug:        string;
+  id: string;
+  slug: string;
   displayName: string | null;
-  bio:         string | null;
-  avatarUrl:   string | null;
-  jarId:       string;
-  splits:      Prisma.JsonValue;
-  createdAt:   Date;
+  bio: string | null;
+  avatarUrl: string | null;
+  jarId: string;
+  splits: Prisma.JsonValue;
+  createdAt: Date;
 }
 
 // The `| undefined` on each optional field is deliberate. The tsconfig enables
@@ -112,7 +112,9 @@ export interface UpdateProfileInput {
 export async function claimSlug(input: ClaimSlugInput) {
   if (!SLUG_REGEX.test(input.slug)) {
     throw Object.assign(
-      new Error("Slug must be 3–32 characters: lowercase letters, numbers, hyphens, underscores."),
+      new Error(
+        "Slug must be 3–32 characters: lowercase letters, numbers, hyphens, underscores.",
+      ),
       { statusCode: 400 },
     );
   }
@@ -145,10 +147,12 @@ export async function claimSlug(input: ClaimSlugInput) {
       // key as "leave unchanged", but exactOptionalPropertyTypes rejects passing
       // an explicit undefined to say the same thing.
       data: {
-        slug:   input.slug,
+        slug: input.slug,
         jarId,
         splits: input.splits ?? [],
-        ...(input.displayName !== undefined && { displayName: input.displayName }),
+        ...(input.displayName !== undefined && {
+          displayName: input.displayName,
+        }),
         ...(input.bio !== undefined && { bio: input.bio }),
       },
     });
@@ -168,7 +172,10 @@ export async function claimSlug(input: ClaimSlugInput) {
  * err.meta.target to say which column conflicted.
  */
 function toClaimConflict(err: unknown): unknown {
-  if (!(err instanceof Prisma.PrismaClientKnownRequestError) || err.code !== "P2002") {
+  if (
+    !(err instanceof Prisma.PrismaClientKnownRequestError) ||
+    err.code !== "P2002"
+  ) {
     return err;
   }
 
@@ -204,14 +211,14 @@ export async function getCreatorBySlug(slug: string): Promise<PublicCreator> {
   const creator = await db.creator.findUnique({
     where: { slug },
     select: {
-      id:          true,
-      slug:        true,
+      id: true,
+      slug: true,
       displayName: true,
-      bio:         true,
-      avatarUrl:   true,
-      jarId:       true,
-      splits:      true,
-      createdAt:   true,
+      bio: true,
+      avatarUrl: true,
+      jarId: true,
+      splits: true,
+      createdAt: true,
     },
   });
 
@@ -231,7 +238,9 @@ export async function updateProfile(input: UpdateProfileInput) {
     where: { id: input.creatorId },
     // See the note in claimSlug: absent key, not an explicit undefined.
     data: {
-      ...(input.displayName !== undefined && { displayName: input.displayName }),
+      ...(input.displayName !== undefined && {
+        displayName: input.displayName,
+      }),
       ...(input.bio !== undefined && { bio: input.bio }),
       ...(input.avatarUrl !== undefined && { avatarUrl: input.avatarUrl }),
       ...(input.email !== undefined && { email: input.email }),

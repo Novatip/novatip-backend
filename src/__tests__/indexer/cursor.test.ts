@@ -134,7 +134,9 @@ describe("an idle indexer", () => {
 
     // An hour of ledgers closed; the cursor tracked them rather than staying
     // pinned at 1000.
-    expect(persistedCursor).toBeGreaterThan(1_000 + (60 * 60 * 1_000) / LEDGER_CLOSE_MS - 20);
+    expect(persistedCursor).toBeGreaterThan(
+      1_000 + (60 * 60 * 1_000) / LEDGER_CLOSE_MS - 20,
+    );
   });
 
   it("throttles writes to at most one per interval", () => {
@@ -146,7 +148,9 @@ describe("an idle indexer", () => {
     });
 
     // 600 polls in the hour — without throttling that is 600 writes.
-    expect(writes.length).toBeLessThanOrEqual(3_600_000 / IDLE_CHECK_INTERVAL_MS + 1);
+    expect(writes.length).toBeLessThanOrEqual(
+      3_600_000 / IDLE_CHECK_INTERVAL_MS + 1,
+    );
 
     for (let i = 1; i < writes.length; i++) {
       expect(writes[i]!.atMs - writes[i - 1]!.atMs).toBeGreaterThanOrEqual(
@@ -169,11 +173,14 @@ describe("an idle indexer", () => {
 
     // Restart path in startIndexer(): savedCursor + 1.
     const resumeLedger = persistedCursor + 1;
-    const headNow = headAtStart + (idleDays * 24 * 60 * 60 * 1_000) / LEDGER_CLOSE_MS;
+    const headNow =
+      headAtStart + (idleDays * 24 * 60 * 60 * 1_000) / LEDGER_CLOSE_MS;
 
     // Before the fix this was headAtStart + 1 — a week of ledgers to re-scan,
     // most of which have long since aged out of RPC event retention.
-    expect(headNow - resumeLedger).toBeLessThan(IDLE_CHECK_INTERVAL_MS / LEDGER_CLOSE_MS + 1);
+    expect(headNow - resumeLedger).toBeLessThan(
+      IDLE_CHECK_INTERVAL_MS / LEDGER_CLOSE_MS + 1,
+    );
   });
 
   it("does not write the cursor when the chain head has not moved", () => {
