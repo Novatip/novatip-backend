@@ -6,7 +6,7 @@
  * GET  /api/v1/auth/me         — return current user from JWT
  */
 
-import type { FastifyPluginAsync } from "fastify";
+import type { FastifyPluginAsync, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
 import { generateChallenge, verifyChallenge } from "./auth.service.js";
 
@@ -28,13 +28,19 @@ interface SlidingWindow {
   windowStart: number;
 }
 
+/**
+ * Fastify treats a two-argument hook as promise-based: it waits for the
+ * returned promise before continuing. A plain synchronous function returns
+ * undefined, so the request hangs until the client gives up. `async` is what
+ * makes the non-limited path resolve and continue.
+ */
 function buildSlidingWindowLimiter(
   limit: number,
   windowMs: number = 60_000,
-): (request: any, reply: any) => void {
+): (request: FastifyRequest, reply: FastifyReply) => Promise<void> {
   const clients = new Map<string, SlidingWindow>();
 
-  return (request: any, reply: any) => {
+  return async (request: FastifyRequest, reply: FastifyReply) => {
     const ip = request.ip;
     const now = Date.now();
     let entry = clients.get(ip);
