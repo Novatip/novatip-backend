@@ -14,7 +14,7 @@
  */
 
 import nacl from "tweetnacl";
-import { randomBytes } from "crypto";
+import { createHash, randomBytes } from "crypto";
 import { StrKey } from "@stellar/stellar-sdk";
 import { setAuthNonce, consumeAuthNonce } from "../../redis.js";
 import { db } from "../../db.js";
@@ -130,22 +130,51 @@ export async function verifyChallenge(
  * Verify an Ed25519 signature over a UTF-8 nonce string.
  * Returns true only if signature is valid.
  */
+/**
+ * SEP-53 message prefix. Wallets sign
+ * `SHA256("Stellar Signed Message:\n" + message)` rather than the raw bytes,
+ * so that a signed message can never be mistaken for a signed transaction.
+ */
+const SEP53_PREFIX = "Stellar Signed Message:\n";
+
+/** The digest a SEP-53 wallet actually signs for a given message. */
+function sep53Digest(message: string): Buffer {
+  const encoded = Buffer.concat([
+    Buffer.from(SEP53_PREFIX, "utf8"),
+    Buffer.from(message, "utf8"),
+  ]);
+  return createHash("sha256").update(encoded).digest();
+}
+
+/**
+ * Verify a signature over the challenge nonce.
+ *
+ * Two payloads are accepted, and both prove the same thing — that the holder
+ * of this account's key signed this specific single-use nonce:
+ *
+ *   1. The SEP-53 digest. This is what Freighter's signMessage and every other
+ *      SEP-53 wallet produces, and it is the path the browser actually uses.
+ *      Verifying only the raw bytes is why wallet sign-in never worked.
+ *   2. The raw nonce bytes, for scripts and tests that sign with a keypair
+ *      directly rather than through a wallet.
+ */
 function verifyEd25519(
   nonce: string,
   signatureHex: string,
   publicKey: Buffer,
 ): boolean {
   try {
-    const message = Buffer.from(nonce, "utf8");
     const signature = Buffer.from(signatureHex, "hex");
 
     if (publicKey.length !== 32) return false;
     if (signature.length !== 64) return false;
 
-    return nacl.sign.detached.verify(
-      new Uint8Array(message),
-      new Uint8Array(signature),
-      new Uint8Array(publicKey),
+    const key = new Uint8Array(publicKey);
+    const sig = new Uint8Array(signature);
+
+    const candidates = [sep53Digest(nonce), Buffer.from(nonce, "utf8")];
+    return candidates.some((payload) =>
+      nacl.sign.detached.verify(new Uint8Array(payload), sig, key),
     );
   } catch {
     return false;
