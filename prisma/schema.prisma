@@ -5,6 +5,10 @@
 
 generator client {
   provider = "prisma-client-js"
+  // The container runs on Alpine (musl + OpenSSL 3), which is a different
+  // target from most dev machines. Without the musl engine listed here the
+  // generated client has no engine it can load at runtime.
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {

@@ -3,9 +3,10 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# @novatip/sdk is installed straight from GitHub, and npm shells out to git to
-# clone it. The alpine image ships without git, so npm ci fails without this.
-RUN apk add --no-cache git
+# git: npm shells out to it to clone @novatip/sdk from GitHub.
+# openssl: Prisma's query and schema engines link against libssl at runtime and
+# fail with "Could not parse schema engine response" without it on Alpine.
+RUN apk add --no-cache git openssl
 
 # Install dependencies first (better layer caching)
 COPY package.json package-lock.json* ./
@@ -26,8 +27,9 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
-# git again: the production install also resolves @novatip/sdk from GitHub.
-RUN apk add --no-cache git
+# git and openssl again: this stage installs from GitHub and runs the Prisma
+# engines, so it needs both for the same reasons as the builder.
+RUN apk add --no-cache git openssl
 
 # Only install production dependencies
 COPY package.json package-lock.json* ./
