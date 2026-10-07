@@ -8,6 +8,7 @@
  *
  * GET    /api/v1/webhooks/:id/deliveries — recent delivery attempts (auth)
  * POST   /api/v1/webhooks/:id/ping       — send a signed test payload (auth)
+ * POST   /api/v1/webhooks/:id/secret     — rotate the signing secret (auth)
  */
 
 import type { FastifyPluginAsync } from "fastify";
@@ -18,16 +19,30 @@ import {
   listWebhookDeliveries,
   sendTestPing,
   setWebhookEnabled,
+  rotateWebhookSecret,
   deleteWebhook,
+  generateWebhookSecret,
   DEFAULT_DELIVERY_PAGE_SIZE,
   MAX_DELIVERY_PAGE_SIZE,
 } from "./webhooks.service.js";
-import { randomBytes } from "crypto";
+
+/**
+ * A caller-supplied signing secret. Shared by registration and rotation so
+ * the two cannot drift on what they accept. 16 characters is the floor for
+ * something used as an HMAC key; omit the field and the server mints one with
+ * 192 bits of entropy instead, which is the better choice.
+ */
+const webhookSecret = z.string().min(16);
 
 const CreateBody = z.object({
   url: z.string().url(),
   /** Optional custom secret; auto-generated if omitted */
-  secret: z.string().min(16).optional(),
+  secret: webhookSecret.optional(),
+});
+
+const RotateBody = z.object({
+  /** Optional custom secret; a fresh one is generated if omitted */
+  secret: webhookSecret.optional(),
 });
 
 /**
@@ -95,7 +110,7 @@ export const webhookRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const { user } = request;
-    const secret = body.data.secret ?? randomBytes(24).toString("hex");
+    const secret = body.data.secret ?? generateWebhookSecret();
     const webhook = await createWebhook(user.sub, body.data.url, secret);
 
     // Return the secret once on creation — it won't be shown again
@@ -172,6 +187,33 @@ export const webhookRoutes: FastifyPluginAsync = async (app) => {
       return reply.send({ delivery });
     },
   );
+
+  // ── POST /:id/secret ───────────────────────────────────────────────────────
+  app.post("/:id/secret", async (request, reply) => {
+    // The body is optional on this route — rotating without choosing a secret
+    // is the normal case, and a client sending no body at all should not get
+    // a validation error for it.
+    const body = RotateBody.safeParse(request.body ?? {});
+    if (!body.success) {
+      return reply.status(400).send({ error: body.error.flatten() });
+    }
+
+    const { user } = request;
+    const { id } = request.params as { id: string };
+    const rotated = await rotateWebhookSecret(
+      user.sub,
+      id,
+      body.data.secret ?? generateWebhookSecret(),
+    );
+
+    if (!rotated) {
+      return reply.status(404).send({ error: "Webhook not found" });
+    }
+
+    // Returned once, as at registration — there is no route that reads a
+    // secret back out, which is why rotation exists.
+    return reply.send({ webhook: rotated });
+  });
 
   // ── DELETE /:id ────────────────────────────────────────────────────────────
   app.delete("/:id", async (request, reply) => {

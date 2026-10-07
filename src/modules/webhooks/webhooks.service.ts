@@ -10,7 +10,7 @@
  *   X-Novatip-Signature: sha256=<hex>
  */
 
-import { createHmac } from "crypto";
+import { createHmac, randomBytes } from "crypto";
 import { db } from "../../db.js";
 import type { TipEvent } from "@novatip/sdk";
 import { stroopsToUsdc } from "@novatip/sdk";
@@ -259,6 +259,24 @@ const webhookSelect = {
   updatedAt: true,
 } as const;
 
+/**
+ * Entropy in a generated signing secret, in bytes. 24 bytes is 192 bits,
+ * rendered as 48 hex characters — far past brute force against an HMAC, and
+ * still short enough to paste into a receiver's config by hand.
+ */
+const SECRET_BYTES = 24;
+
+/**
+ * Mint a signing secret.
+ *
+ * Both registration and rotation go through here so there is one definition of
+ * what a secret is; a rotation that quietly produced weaker secrets than
+ * registration would be invisible until it mattered.
+ */
+export function generateWebhookSecret(): string {
+  return randomBytes(SECRET_BYTES).toString("hex");
+}
+
 export async function createWebhook(
   creatorId: string,
   url: string,
@@ -371,6 +389,57 @@ export async function listWebhookDeliveries(
     skip: offset,
     select: deliverySelect,
   });
+}
+
+// ── Secret rotation ───────────────────────────────────────────────────────────
+
+/**
+ * Replace a webhook's signing secret, returning the webhook and the new secret
+ * — once. Null means the caller owns no webhook with that id.
+ *
+ * The secret was previously minted once at registration and shown in that one
+ * response, so a leaked or lost secret could only be dealt with by deleting
+ * the webhook and creating another. That changes the id and discards the
+ * delivery history, which is a lot to give up to replace a credential.
+ *
+ * Rotation writes nothing but `secret`: the id, URL, enabled flag and every
+ * WebhookDelivery row survive untouched. dispatchWebhooks reads the secret per
+ * dispatch, so the next delivery is signed with the new one with no restart
+ * and no cache to invalidate.
+ *
+ * There is no overlap window where both secrets are accepted — the signature
+ * is computed by us and verified by the receiver, so the cutover is whenever
+ * the receiver updates its copy. A creator rotating a *leaked* secret wants
+ * the old one dead immediately, which is the stronger requirement; a creator
+ * rotating routinely can disable the webhook first (PATCH /webhooks/:id),
+ * update both sides, then re-enable.
+ *
+ * `secret` accepts a caller-supplied value for symmetry with registration, so
+ * choosing your own secret does not require the delete-and-recreate this
+ * route exists to avoid.
+ */
+export async function rotateWebhookSecret(
+  creatorId: string,
+  webhookId: string,
+  secret: string = generateWebhookSecret(),
+) {
+  const { count } = await db.webhook.updateMany({
+    where: { id: webhookId, creatorId },
+    data: { secret },
+  });
+
+  if (count === 0) return null;
+
+  const webhook = await db.webhook.findUnique({
+    where: { id: webhookId },
+    select: webhookSelect,
+  });
+
+  if (webhook === null) return null;
+
+  // Returned alongside the webhook exactly as registration does it, and for
+  // the same reason: this is the only time it is readable.
+  return { ...webhook, secret };
 }
 
 export async function deleteWebhook(
