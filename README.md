@@ -156,6 +156,58 @@ returns 404.
 Note that history is not kept forever — see Webhook Delivery Retention for the
 windows, which default to 30 days for successes and 90 for failures.
 
+POST /webhooks/:id/ping      - Send a signed test payload (JWT)
+
+Sends a test delivery to the webhook immediately and returns what the receiver
+did with it, so a creator can confirm the URL and their signature check before a
+real tip depends on either:
+
+    {
+      "delivery": {
+        "statusCode": 200,
+        "success": true,
+        "response": "ok",
+        "attemptedAt": "2026-10-07T12:34:56.789Z"
+      }
+    }
+
+The response is 200 whenever the ping was attempted, including when the receiver
+rejected it — the receiver's verdict is `success` in the body. Failing the whole
+call would make "your endpoint is broken" indistinguishable from "the ping
+endpoint is broken". A webhook belonging to another creator answers 404.
+
+The ping goes out over the same code path, with the same signature, as a real
+tip, so a receiver that passes here passes for real. It is also recorded like
+any other attempt, so it appears in /webhooks/:id/deliveries and ages out under
+the same retention windows.
+
+A disabled webhook is pinged too. That is the intended workflow: pause a broken
+receiver (PATCH /webhooks/:id), fix it, ping to confirm, then re-enable. The
+`enabled` flag gates automatic dispatch, not an explicit request from the owner.
+
+This route is rate limited to 10 requests per minute per caller, below the
+global 100 — it is the only route where the caller picks a URL and has the
+server fetch it on demand, and that should not be usable to drive traffic at a
+third party.
+
+### Test payload shape
+
+    {
+      "event": "webhook.test",
+      "test": true,
+      "webhookId": "clz...",
+      "timestamp": "2026-10-07T12:34:56.789Z"
+    }
+
+It is marked as a test twice over, because receivers are written both ways: one
+that switches on `event` never matches `tip.received`, and one that ignores
+`event` still sees `test: true`. Either way it must not be booked as a tip —
+note that the payload carries no amount, sender or jar, so there is no tip to be
+reconstructed from it even by a receiver that tries.
+
+The signature is computed over this body exactly as for a tip (see Webhook
+Signatures), which is what makes the ping a real test of the receiving side.
+
 ## Indexer
 
 Polls Soroban RPC every 6s for TipReceived events, persists to PostgreSQL,

@@ -1,7 +1,9 @@
 /**
  * webhooks.service.ts
  *
- * Dispatches TipReceived events to creator-registered webhook URLs.
+ * Dispatches TipReceived events to creator-registered webhook URLs, and sends
+ * the on-demand test ping a creator uses to check a receiver before a real tip
+ * depends on it.
  *
  * Security: each delivery is signed with HMAC-SHA256 using the webhook's
  * shared secret. The receiving server can verify:
@@ -26,9 +28,13 @@ const MAX_PAYLOAD_SIZE = 2_048; // bound stored delivery payload to 2 KB
  * stored copy only needs to be large enough to tell what was dispatched.
  * Fields are trimmed in priority order: message first, then amountRaw.
  */
-function boundPayload(payload: WebhookPayload, limit: number): object {
+function boundPayload(payload: DeliveryPayload, limit: number): object {
   const json = JSON.stringify(payload);
   if (Buffer.byteLength(json, "utf8") <= limit) return payload as object;
+
+  // The test ping is fixed-size and cannot reach the limit, so there is
+  // nothing to trim and no variable field to trim it from.
+  if (payload.event !== "tip.received") return payload as object;
 
   // Truncate message first — it is the largest variable field.
   const truncated: WebhookPayload = {
@@ -54,6 +60,33 @@ interface WebhookPayload {
   message: string;
   ledger: number;
   timestamp: string;
+}
+
+/**
+ * The body of a test ping.
+ *
+ * Marked as a test twice over, because a receiver can be written either way:
+ * one that switches on `event` never matches "tip.received", and one that
+ * ignores `event` still sees `test: true`. Neither should book a tip from
+ * this. It deliberately carries no amount, sender or jar — there is no
+ * plausible tip to be reconstructed from it even by a receiver that tries.
+ */
+interface TestPingPayload {
+  event: "webhook.test";
+  test: true;
+  webhookId: string;
+  timestamp: string;
+}
+
+type DeliveryPayload = WebhookPayload | TestPingPayload;
+
+/** What one delivery attempt did, as recorded and as reported to the caller. */
+export interface DeliveryOutcome {
+  success: boolean;
+  statusCode: number | null;
+  /** Response body (truncated), or the transport error when there was none. */
+  response: string | null;
+  attemptedAt: Date;
 }
 
 // ── Dispatch ──────────────────────────────────────────────────────────────────
@@ -89,11 +122,19 @@ export async function dispatchWebhooks(event: TipEvent): Promise<void> {
   );
 }
 
+/**
+ * POST one signed body to one webhook and record the attempt.
+ *
+ * Never throws: a bad endpoint must not take down the indexer, and the ping
+ * route wants the failure as data rather than as an exception. The outcome is
+ * returned so the caller can report it — the indexer discards it, the ping
+ * route hands it back to the creator.
+ */
 async function deliver(
   webhook: { id: string; url: string; secret: string },
   body: string,
-  payload: WebhookPayload,
-): Promise<void> {
+  payload: DeliveryPayload,
+): Promise<DeliveryOutcome> {
   const signature = sign(body, webhook.secret);
 
   let statusCode: number | undefined;
@@ -124,7 +165,7 @@ async function deliver(
   }
 
   // Record delivery attempt
-  await db.webhookDelivery.create({
+  const attempt = await db.webhookDelivery.create({
     // statusCode and response are nullable columns: a request that timed out or
     // failed to connect genuinely has neither, and NULL records that honestly.
     // An explicit undefined is also rejected under exactOptionalPropertyTypes.
@@ -132,8 +173,14 @@ async function deliver(
       webhookId: webhook.id,
       statusCode: statusCode ?? null,
       success,
-      payload: payload as object,
+      payload: boundPayload(payload, MAX_PAYLOAD_SIZE),
       response: responseText ?? null,
+    },
+    select: {
+      statusCode: true,
+      success: true,
+      response: true,
+      attemptedAt: true,
     },
   });
 
@@ -143,10 +190,55 @@ async function deliver(
       "delivery failed",
     );
   }
+
+  // Reported straight from the stored row, so what the creator is told and
+  // what the delivery history will show them cannot drift apart.
+  return attempt;
 }
 
 function sign(body: string, secret: string): string {
   return createHmac("sha256", secret).update(body).digest("hex");
+}
+
+// ── Test ping ─────────────────────────────────────────────────────────────────
+
+/**
+ * Send a signed test payload to one of the caller's webhooks and return what
+ * happened. Null means the caller owns no webhook with that id.
+ *
+ * Without this, a creator finds out their URL is wrong or their signature
+ * check is broken by missing a tip notification — the worst possible moment to
+ * learn it. The ping uses the same signing and the same delivery path as a
+ * real tip, so a receiver that passes here passes for real.
+ *
+ * A disabled webhook is pinged too. That is the point: pause a broken
+ * receiver, fix it, ping to confirm, then re-enable. The `enabled` flag gates
+ * automatic dispatch, not an explicit request from the owner.
+ *
+ * The attempt is recorded like any other, so it also shows up in the delivery
+ * history and ages out under the same retention windows.
+ */
+export async function sendTestPing(
+  creatorId: string,
+  webhookId: string,
+): Promise<DeliveryOutcome | null> {
+  const webhook = await db.webhook.findFirst({
+    where: { id: webhookId, creatorId },
+    // The one place the secret is read back out — it is needed to sign, and
+    // never leaves this function.
+    select: { id: true, url: true, secret: true },
+  });
+
+  if (!webhook) return null;
+
+  const payload: TestPingPayload = {
+    event: "webhook.test",
+    test: true,
+    webhookId: webhook.id,
+    timestamp: new Date().toISOString(),
+  };
+
+  return deliver(webhook, JSON.stringify(payload), payload);
 }
 
 // ── CRUD (creator manages their own webhooks) ─────────────────────────────────

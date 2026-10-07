@@ -7,6 +7,7 @@
  * DELETE /api/v1/webhooks/:id    — remove a webhook (auth)
  *
  * GET    /api/v1/webhooks/:id/deliveries — recent delivery attempts (auth)
+ * POST   /api/v1/webhooks/:id/ping       — send a signed test payload (auth)
  */
 
 import type { FastifyPluginAsync } from "fastify";
@@ -15,6 +16,7 @@ import {
   createWebhook,
   listWebhooks,
   listWebhookDeliveries,
+  sendTestPing,
   setWebhookEnabled,
   deleteWebhook,
   DEFAULT_DELIVERY_PAGE_SIZE,
@@ -143,6 +145,33 @@ export const webhookRoutes: FastifyPluginAsync = async (app) => {
 
     return reply.send({ deliveries });
   });
+
+  // ── POST /:id/ping ─────────────────────────────────────────────────────────
+  app.post(
+    "/:id/ping",
+    {
+      // Tighter than the global 100/min. This is the one route where a caller
+      // chooses a URL and has the server fetch it on demand, so it should not
+      // be usable as a traffic amplifier against a third party — a creator
+      // verifying a receiver needs a handful of attempts, not a hundred.
+      config: { rateLimit: { max: 10, timeWindow: "1 minute" } },
+    },
+    async (request, reply) => {
+      const { user } = request;
+      const { id } = request.params as { id: string };
+      const delivery = await sendTestPing(user.sub, id);
+
+      if (delivery === null) {
+        return reply.status(404).send({ error: "Webhook not found" });
+      }
+
+      // 200 even when the receiver rejected the ping. The request to *this*
+      // API succeeded; the receiver's answer is the payload, and failing the
+      // whole call would make "your endpoint is broken" indistinguishable
+      // from "the ping endpoint is broken".
+      return reply.send({ delivery });
+    },
+  );
 
   // ── DELETE /:id ────────────────────────────────────────────────────────────
   app.delete("/:id", async (request, reply) => {
