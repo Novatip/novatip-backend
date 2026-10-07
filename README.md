@@ -36,6 +36,7 @@ USDC_CONTRACT_ID - USDC Stellar Asset Contract ID
 INDEXER_START_LEDGER - Ledger to begin indexing from (default: 0)
 RESEND_API_KEY - Resend API key (skip to disable email)
 APP_BASE_URL - Frontend base URL (default: http://localhost:3000)
+MAX_WEBHOOKS_PER_CREATOR - Most webhooks one creator may register (default: 5, 0 removes the cap)
 WEBHOOK_DELIVERY_RETENTION_DAYS - Prune successful deliveries older than this (default: 30, 0 disables)
 WEBHOOK_DELIVERY_FAILURE_RETENTION_DAYS - Prune failed deliveries older than this (default: 90, 0 disables)
 WEBHOOK_DELIVERY_PRUNE_BATCH_SIZE - Rows deleted per statement (default: 500)
@@ -107,6 +108,18 @@ boundaries are UTC, not the requesting client's local time zone.
 GET    /webhooks             - List webhooks (JWT)
 POST   /webhooks             - Register webhook (JWT)
 DELETE /webhooks/:id         - Remove webhook (JWT)
+
+POST /webhooks is capped at MAX_WEBHOOKS_PER_CREATOR endpoints per creator
+(default 5). Registering beyond it returns 409 with error.code
+"WEBHOOK_LIMIT_REACHED" and a message naming the limit and the env var that
+sets it; delete an existing webhook to make room. The cap counts every row the
+creator holds, enabled or not — a disabled webhook can be re-enabled, so
+excluding them would make the cap trivial to walk around. The count and the
+insert run in one transaction, so two concurrent registrations cannot both pass
+the check. Setting MAX_WEBHOOKS_PER_CREATOR=0 removes the cap, which is only
+sensible for a trusted single-tenant deployment: dispatchWebhooks fans out to
+every enabled endpoint on every indexed tip, each with a five second timeout
+and a delivery row of its own.
 
 ## Indexer
 

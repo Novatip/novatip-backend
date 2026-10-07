@@ -61,6 +61,14 @@ export const config = {
 
   webhooks: {
     /**
+     * Most webhooks one creator may register. Every enabled endpoint is
+     * delivered to on every indexed tip, each with its own timeout and its own
+     * delivery row, so this bounds how much outbound work a single tip can
+     * cause. Set to 0 to remove the cap.
+     */
+    maxPerCreator: optionalInt("MAX_WEBHOOKS_PER_CREATOR", 5),
+
+    /**
      * Delivery-log retention. Every attempt writes a WebhookDelivery row
      * carrying the payload and up to 1 KB of response body, one per tip per
      * enabled webhook — left alone this becomes the largest table in the
