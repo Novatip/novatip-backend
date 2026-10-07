@@ -97,7 +97,34 @@ new integrations.
 GET /analytics/totals        - Total tips, amount, supporters (JWT)
 GET /analytics/timeseries    - Daily breakdown ?days=30 (JWT)
 GET /analytics/top-supporters- Ranked supporters ?limit=10 (JWT)
-GET /analytics/recent        - Live tip feed ?limit=20 (JWT)
+GET /analytics/recent        - Live tip feed ?limit=20&cursor=<opaque> (JWT)
+
+/analytics/recent is cursor-paginated. It takes ?limit= (1–100, default 20)
+and ?cursor=, and returns:
+
+    { "tips": [ { "id", "txHash", "fromAddress", "amount", "message",
+                  "ledgerAt" } ],
+      "nextCursor": "<opaque string>" | null }
+
+Pass the nextCursor from one response back as ?cursor= to get the page after
+it. nextCursor is null when the page reaches the end of the creator's history,
+so a client pages until it sees null rather than until it sees an empty page.
+amount is stroops as a string (i128 precision) and ledgerAt is ISO 8601 UTC.
+
+The cursor is opaque: it encodes a position in the result set, not a field a
+client composes, and its contents are not part of the API. A cursor this server
+did not issue is rejected with 400 and error.code "INVALID_CURSOR" rather than
+being paged from approximately the right place.
+
+Paging is stable across tips arriving mid-scroll. The ordering is
+("ledgerAt" DESC, id DESC) and the cursor names the row the previous page ended
+on, so a tip indexed at the head between two requests cannot shift a boundary
+that has already been handed out — a client never sees a row twice and never
+skips the row a new arrival would have displaced. The id tiebreaker matters:
+ledgerAt is not unique, so a page boundary can land inside a group of tips
+sharing a ledger close time, and ordering on ledgerAt alone would repeat or
+drop the rest of that group. The new arrival is simply not in the pages already
+served; it is picked up by the next request to the head.
 
 /analytics/timeseries always returns exactly `days` points, oldest first, one
 per UTC calendar day (00:00–23:59:59 UTC) up to and including today. Days

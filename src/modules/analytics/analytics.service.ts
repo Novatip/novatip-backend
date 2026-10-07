@@ -10,6 +10,7 @@
 
 import { db } from "../../db.js";
 import { cacheGet, cacheSet } from "../../redis.js";
+import { cursorFilter, decodeTipCursor, encodeTipCursor } from "./cursor.js";
 
 const CACHE_TTL = 30; // seconds
 
@@ -197,20 +198,74 @@ export async function getTopSupporters(
 
 // ── Recent tips ───────────────────────────────────────────────────────────────
 
+export interface RecentTip {
+  id: string;
+  txHash: string;
+  fromAddress: string;
+  amount: string; // stroops as string (i128 precision)
+  message: string;
+  /**
+   * Ledger close time as an ISO 8601 string rather than a Date. Over the wire
+   * these were always ISO strings — JSON has no date type — but the cached and
+   * uncached paths disagreed on the in-process type, since a Date does not
+   * survive a round trip through Redis. Normalising here makes the two paths
+   * return the same thing.
+   */
+  ledgerAt: string;
+}
+
+export interface RecentTipsPage {
+  tips: RecentTip[];
+  /**
+   * Opaque cursor for the following page, or null when this page is the end of
+   * the feed. Clients echo it back as ?cursor= and do not parse it.
+   */
+  nextCursor: string | null;
+}
+
+/** Largest page the recent-tips feed will return, whatever the caller asks for. */
+export const RECENT_TIPS_MAX_LIMIT = 100;
+
+/** Page size used when the caller does not ask for one. */
+export const RECENT_TIPS_DEFAULT_LIMIT = 20;
+
 /**
- * Most recent tips for the live feed on the creator dashboard.
- * Default: last 20.
+ * One page of a creator's tips, newest first.
+ *
+ * Paging is by cursor, not offset. The feed grows at the head, so an offset
+ * page would shift by one for every tip indexed mid-scroll: the client would
+ * see a row twice and never see the row it displaced. The cursor names the row
+ * the previous page ended on, so a new arrival at the head cannot move a
+ * boundary that has already been handed out.
+ *
+ * A tip indexed between two requests is simply not in the pages already
+ * served; it appears on a later page only if it sorts after the cursor
+ * (possible for a tip sharing a ledger close time with the boundary row). It
+ * is never a duplicate and never displaces an unseen row.
+ *
+ * `limit` is clamped to RECENT_TIPS_MAX_LIMIT here as well as at the route, so
+ * a direct caller cannot ask for an unbounded page.
  */
-export async function getRecentTips(creatorId: string, limit = 20) {
-  const key = `analytics:recent:${creatorId}:${limit}`;
-  const cached =
-    await cacheGet<Awaited<ReturnType<typeof db.tip.findMany>>>(key);
+export async function getRecentTips(
+  creatorId: string,
+  limit = RECENT_TIPS_DEFAULT_LIMIT,
+  cursor?: string | null,
+): Promise<RecentTipsPage> {
+  const take = Math.min(Math.max(limit, 1), RECENT_TIPS_MAX_LIMIT);
+
+  // Decoded before the cache read so a malformed cursor is a 400 either way.
+  const after = cursor ? decodeTipCursor(cursor) : null;
+
+  const key = `analytics:recent:${creatorId}:${take}:${cursor ?? "head"}`;
+  const cached = await cacheGet<RecentTipsPage>(key);
   if (cached) return cached;
 
-  const result = await db.tip.findMany({
-    where: { creatorId },
-    orderBy: { ledgerAt: "desc" },
-    take: limit,
+  // One extra row is fetched purely to learn whether another page exists; it
+  // is dropped before the response so the page is never over `take`.
+  const rows = await db.tip.findMany({
+    where: { creatorId, ...(after ? cursorFilter(after, "id") : {}) },
+    orderBy: [{ ledgerAt: "desc" }, { id: "desc" }],
+    take: take + 1,
     select: {
       id: true,
       txHash: true,
@@ -221,7 +276,47 @@ export async function getRecentTips(creatorId: string, limit = 20) {
     },
   });
 
+  const result = toRecentTipsPage(rows, take);
+
   // Short TTL keeps the live feed responsive; the dashboard polls every 15 s.
   await cacheSet(key, result, CACHE_TTL);
   return result;
+}
+
+/**
+ * Trim the lookahead row and derive the next cursor.
+ *
+ * Exported for tests: the page/cursor arithmetic is the part that is easy to
+ * get off by one, and it needs no database to exercise.
+ */
+export function toRecentTipsPage(
+  rows: Array<{
+    id: string;
+    txHash: string;
+    fromAddress: string;
+    amount: string;
+    message: string;
+    ledgerAt: Date;
+  }>,
+  take: number,
+): RecentTipsPage {
+  const hasMore = rows.length > take;
+  const page = hasMore ? rows.slice(0, take) : rows;
+  const last = page[page.length - 1];
+
+  return {
+    tips: page.map((row) => ({
+      id: row.id,
+      txHash: row.txHash,
+      fromAddress: row.fromAddress,
+      amount: row.amount,
+      message: row.message,
+      ledgerAt: row.ledgerAt.toISOString(),
+    })),
+    // A cursor is only issued when there is something after it, so a client
+    // paging to the end gets null and stops rather than making one more
+    // request that comes back empty.
+    nextCursor:
+      hasMore && last ? encodeTipCursor(last.ledgerAt, last.id) : null,
+  };
 }
