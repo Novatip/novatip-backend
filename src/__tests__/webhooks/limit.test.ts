@@ -9,13 +9,14 @@
  * delivery row — so one tip turned into an unbounded amount of outbound work
  * inside the indexer's event handling.
  *
- * db is mocked so this runs without PostgreSQL: what is under test is the
- * decision and the transaction around it, not Prisma. config.ts validates
- * required env vars at module load, so those are set before the module graph
- * is imported — including the cap itself, which is read from the environment.
+ * db is mocked through the shared fake (see fake-db.helper.ts) so this runs
+ * without PostgreSQL. config.ts validates required env vars at module load, so
+ * those are set before the module graph is imported — including the cap
+ * itself, which is read from the environment.
  */
 
 import { jest } from "@jest/globals";
+import { createFakeDb } from "./fake-db.helper.js";
 
 process.env["DATABASE_URL"] ??= "postgresql://user:pass@localhost:5432/test";
 process.env["JWT_SECRET"] ??= "test-secret-not-used-for-signing";
@@ -23,52 +24,31 @@ process.env["TIP_SPLITTER_CONTRACT_ID"] ??= `C${"A".repeat(55)}`;
 process.env["MAX_WEBHOOKS_PER_CREATOR"] = "3";
 
 const CREATOR = "creator_1";
+const OTHER_CREATOR = "creator_2";
 
-/** How many webhooks the mocked creator currently holds. */
-let existingCount = 0;
-
-const created: Array<{ creatorId: string; url: string; secret: string }> = [];
-
-const webhookDelegate = {
-  count: async (): Promise<number> => existingCount,
-  create: async ({
-    data,
-  }: {
-    data: { creatorId: string; url: string; secret: string };
-  }) => {
-    created.push(data);
-    existingCount += 1;
-    return { id: `wh_${created.length}`, enabled: true, ...data };
-  },
-};
-
-/** Annotated rather than inferred: $transaction hands back the client itself. */
-interface MockDb {
-  webhook: typeof webhookDelegate;
-  $transaction: <T>(fn: (tx: MockDb) => Promise<T>) => Promise<T>;
-}
-
-const mockDb: MockDb = {
-  webhook: webhookDelegate,
-  // Interactive transaction: run the callback against the same delegates, so
-  // the count-then-insert sequence under test actually executes.
-  $transaction: async <T>(fn: (tx: MockDb) => Promise<T>): Promise<T> =>
-    fn(mockDb),
-};
+const fake = createFakeDb();
 
 jest.unstable_mockModule("../../db.js", () => ({
-  db: mockDb,
+  db: fake.db,
   disconnectDb: async (): Promise<void> => undefined,
 }));
 
 const { assertWebhookLimit, webhookLimit, WEBHOOK_LIMIT_CODE } =
   await import("../../modules/webhooks/limit.js");
-const { createWebhook } =
+const { createWebhook, setWebhookEnabled } =
   await import("../../modules/webhooks/webhooks.service.js");
 
+/** Register one webhook, with a distinct URL so rows are tellable apart. */
+function register(creatorId = CREATOR, n = 0): Promise<unknown> {
+  return createWebhook(
+    creatorId,
+    `https://hooks.example.com/${creatorId}/${n}`,
+    "s".repeat(24),
+  );
+}
+
 beforeEach(() => {
-  existingCount = 0;
-  created.length = 0;
+  fake.webhooks.clear();
 });
 
 // ── The configured limit ──────────────────────────────────────────────────────
@@ -138,45 +118,55 @@ describe("assertWebhookLimit", () => {
 
 describe("createWebhook", () => {
   it("registers up to the cap", async () => {
-    for (let i = 0; i < 3; i++) {
-      await createWebhook(
-        CREATOR,
-        `https://hooks.example.com/${i}`,
-        "s".repeat(24),
-      );
-    }
-    expect(created).toHaveLength(3);
+    for (let i = 0; i < 3; i++) await register(CREATOR, i);
+    expect(fake.webhooks.size).toBe(3);
   });
 
   it("rejects the one past the cap without inserting a row", async () => {
-    existingCount = 3;
+    for (let i = 0; i < 3; i++) await register(CREATOR, i);
 
-    await expect(
-      createWebhook(CREATOR, "https://hooks.example.com/4", "s".repeat(24)),
-    ).rejects.toThrow(/at most 3 webhooks/);
+    await expect(register(CREATOR, 4)).rejects.toThrow(/at most 3 webhooks/);
 
-    expect(created).toHaveLength(0);
+    expect(fake.webhooks.size).toBe(3);
   });
 
-  it("counts every row the creator holds, enabled or not", async () => {
-    // The count is unfiltered on `enabled` on purpose: a disabled webhook is
-    // one the creator can flip back on, so excluding them would make the cap
-    // trivial to walk around.
-    const countSpy = jest.spyOn(webhookDelegate, "count");
-    existingCount = 1;
+  it("frees a slot when a webhook is deleted", async () => {
+    // The error tells the creator to delete one to make room, so that has to
+    // actually work rather than leaving them permanently stuck.
+    for (let i = 0; i < 3; i++) await register(CREATOR, i);
+    const [first] = [...fake.webhooks.keys()];
+    fake.webhooks.delete(first as string);
 
-    await createWebhook(CREATOR, "https://hooks.example.com/x", "s".repeat(24));
+    await expect(register(CREATOR, 4)).resolves.toBeDefined();
+  });
 
-    expect(countSpy).toHaveBeenCalledWith({ where: { creatorId: CREATOR } });
-    countSpy.mockRestore();
+  it("counts a webhook that has been disabled", async () => {
+    // The count is unfiltered on `enabled` on purpose: PATCH /webhooks/:id can
+    // re-enable a paused webhook at any time, so excluding disabled rows would
+    // make the cap trivial to walk around — pause three, register three more.
+    for (let i = 0; i < 3; i++) await register(CREATOR, i);
+    for (const id of fake.webhooks.keys()) {
+      await setWebhookEnabled(CREATOR, id, false);
+    }
+
+    expect([...fake.webhooks.values()].every((row) => !row.enabled)).toBe(true);
+    await expect(register(CREATOR, 4)).rejects.toThrow(/at most 3 webhooks/);
+  });
+
+  it("scopes the cap per creator", async () => {
+    // One creator filling their quota must not block anybody else's.
+    for (let i = 0; i < 3; i++) await register(CREATOR, i);
+
+    await expect(register(OTHER_CREATOR, 0)).resolves.toBeDefined();
   });
 
   it("checks and inserts inside one transaction", async () => {
     // Two concurrent registrations that each read the pre-insert count would
     // otherwise both pass the check and leave the creator one over the cap.
-    const txSpy = jest.spyOn(mockDb, "$transaction");
+    const client = fake.db as { $transaction: (...args: never[]) => unknown };
+    const txSpy = jest.spyOn(client, "$transaction");
 
-    await createWebhook(CREATOR, "https://hooks.example.com/y", "s".repeat(24));
+    await register(CREATOR, 0);
 
     expect(txSpy).toHaveBeenCalledTimes(1);
     txSpy.mockRestore();

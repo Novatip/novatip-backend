@@ -205,19 +205,120 @@ every route registered in it.
 
 GET    /webhooks             - List webhooks (JWT)
 POST   /webhooks             - Register webhook (JWT)
+PATCH  /webhooks/:id         - Enable or disable a webhook (JWT)
 DELETE /webhooks/:id         - Remove webhook (JWT)
 
 POST /webhooks is capped at MAX_WEBHOOKS_PER_CREATOR endpoints per creator
 (default 5). Registering beyond it returns 409 with error.code
 "WEBHOOK_LIMIT_REACHED" and a message naming the limit and the env var that
 sets it; delete an existing webhook to make room. The cap counts every row the
-creator holds, enabled or not — a disabled webhook can be re-enabled, so
-excluding them would make the cap trivial to walk around. The count and the
-insert run in one transaction, so two concurrent registrations cannot both pass
-the check. Setting MAX_WEBHOOKS_PER_CREATOR=0 removes the cap, which is only
-sensible for a trusted single-tenant deployment: dispatchWebhooks fans out to
-every enabled endpoint on every indexed tip, each with a five second timeout
-and a delivery row of its own.
+creator holds, enabled or not — PATCH /webhooks/:id can re-enable a disabled
+one at any time, so excluding them would make the cap trivial to walk around.
+The count and the insert run in one transaction, so two concurrent
+registrations cannot both pass the check. Setting MAX_WEBHOOKS_PER_CREATOR=0
+removes the cap, which is only sensible for a trusted single-tenant deployment:
+dispatchWebhooks fans out to every enabled endpoint on every indexed tip, each
+with a five second timeout and a delivery row of its own.
+
+PATCH /webhooks/:id takes `{ "enabled": true | false }` and returns the updated
+webhook. It is the way to pause a webhook whose receiver is broken: the secret
+is left alone, so re-enabling resumes deliveries against the secret the receiver
+already holds — no re-registration and no new secret to distribute. Only the
+`enabled` flag is settable this way; a different URL is a different receiver and
+should get its own webhook and secret.
+
+The body sends the state it wants rather than asking for a flip, so a client
+retrying after a dropped response cannot accidentally re-enable a webhook it
+meant to pause. A webhook belonging to another creator answers 404, the same as
+one that does not exist.
+
+GET  /webhooks/:id/deliveries - Recent delivery attempts (JWT)
+
+Every dispatch attempt is already recorded in WebhookDelivery; this is the way
+to read it back. Attempts come newest first, each entry carrying the HTTP status
+code the receiver returned, whether it counted as a success (any 2xx), when it
+was attempted, and up to 1 KB of the response body:
+
+    {
+      "deliveries": [
+        {
+          "id": "clz...",
+          "statusCode": 500,
+          "success": false,
+          "response": "Internal Server Error",
+          "attemptedAt": "2026-10-07T12:34:56.789Z"
+        }
+      ]
+    }
+
+statusCode and response are null when the request never completed — a timeout
+(5s) or a connection failure genuinely has no status, and response then holds
+the transport error instead.
+
+The request payload is not returned: it is the largest column in the row and the
+creator already knows its shape (see Webhook Signatures), whereas what they
+cannot otherwise see is what came back.
+
+Paging is `?limit=` (1–100, default 20) and `?offset=`. A limit above the
+ceiling is a 400 naming it rather than a silently shortened page. A webhook that
+has not fired yet returns an empty array; one belonging to another creator
+returns 404.
+
+Note that history is not kept forever — see Webhook Delivery Retention for the
+windows, which default to 30 days for successes and 90 for failures.
+
+POST /webhooks/:id/ping      - Send a signed test payload (JWT)
+POST /webhooks/:id/secret    - Rotate the signing secret (JWT)
+
+Sends a test delivery to the webhook immediately and returns what the receiver
+did with it, so a creator can confirm the URL and their signature check before a
+real tip depends on either:
+
+    {
+      "delivery": {
+        "statusCode": 200,
+        "success": true,
+        "response": "ok",
+        "attemptedAt": "2026-10-07T12:34:56.789Z"
+      }
+    }
+
+The response is 200 whenever the ping was attempted, including when the receiver
+rejected it — the receiver's verdict is `success` in the body. Failing the whole
+call would make "your endpoint is broken" indistinguishable from "the ping
+endpoint is broken". A webhook belonging to another creator answers 404.
+
+The ping goes out over the same code path, with the same signature, as a real
+tip, so a receiver that passes here passes for real. It is also recorded like
+any other attempt, so it appears in /webhooks/:id/deliveries and ages out under
+the same retention windows.
+
+A disabled webhook is pinged too. That is the intended workflow: pause a broken
+receiver (PATCH /webhooks/:id), fix it, ping to confirm, then re-enable. The
+`enabled` flag gates automatic dispatch, not an explicit request from the owner.
+
+This route is rate limited to 10 requests per minute per caller, below the
+global 100 — it is the only route where the caller picks a URL and has the
+server fetch it on demand, and that should not be usable to drive traffic at a
+third party.
+
+### Test payload shape
+
+    {
+      "event": "webhook.test",
+      "test": true,
+      "webhookId": "clz...",
+      "timestamp": "2026-10-07T12:34:56.789Z"
+    }
+
+It is marked as a test twice over, because receivers are written both ways: one
+that switches on `event` never matches `tip.received`, and one that ignores
+`event` still sees `test: true`. Either way it must not be booked as a tip —
+note that the payload carries no amount, sender or jar, so there is no tip to be
+reconstructed from it even by a receiver that tries.
+
+The signature is computed over this body exactly as for a tip (see Webhook
+Signatures), which is what makes the ping a real test of the receiving side.
 
 ## Indexer
 
@@ -296,6 +397,45 @@ provider refused.
 
 Header: X-Novatip-Signature: sha256=<hex>
 Verify: createHmac("sha256", secret).update(body).digest("hex")
+
+The secret is returned exactly twice in its life: in the POST /webhooks response
+that created the webhook, and in a POST /webhooks/:id/secret response that
+rotated it. No route reads one back out, so a lost secret cannot be recovered —
+it can only be replaced.
+
+### Rotating the secret
+
+POST /webhooks/:id/secret mints a new secret and returns it once, in the same
+shape as registration:
+
+    {
+      "webhook": {
+        "id": "clz...",
+        "url": "https://hooks.example.com/novatip",
+        "enabled": true,
+        "secret": "9f3c…",
+        "createdAt": "2026-09-01T10:00:00.000Z",
+        "updatedAt": "2026-10-07T12:34:56.789Z"
+      }
+    }
+
+Nothing but the secret changes: the webhook keeps its id, URL, enabled flag and
+its entire delivery history. That is the difference from the old remedy of
+deleting the webhook and registering a new one, which changed the id and broke
+anything referencing it. Send `{ "secret": "..." }` (at least 16 characters) to
+choose your own, exactly as at registration; omit it and the server generates 24
+random bytes, which is the better choice.
+
+Deliveries are signed with whatever secret is stored at the moment they are
+dispatched, so the next tip after a rotation uses the new one — no restart, no
+cache to clear.
+
+There is no window in which both secrets are accepted. The signature is produced
+here and checked by the receiver, so the cutover happens when the receiver's
+copy is updated, and a secret being rotated because it leaked needs the old one
+dead at once. To rotate without dropping a tip, disable the webhook first
+(PATCH /webhooks/:id), update both sides, then re-enable — and POST
+/webhooks/:id/ping to confirm the new secret verifies before you do.
 
 ## Webhook Delivery Retention
 

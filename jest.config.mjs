@@ -16,7 +16,11 @@ const config = {
   extensionsToTreatAsEsm: [".ts"],
   // Only run the TypeScript sources. Without this, a prior `npm run build`
   // leaves compiled copies in dist/ and every suite runs twice.
-  testPathIgnorePatterns: ["/node_modules/", "/dist/"],
+  //
+  // Jest's default testMatch claims every .ts file under __tests__, so shared
+  // fixtures living there would be collected as suites and fail with "must
+  // contain at least one test". Helpers are named *.helper.ts and skipped.
+  testPathIgnorePatterns: ["/node_modules/", "/dist/", "\\.helper\\.ts$"],
   moduleNameMapper: {
     // Rewrite .js imports to their .ts source so ts-jest can resolve them
     "^(\\.{1,2}/.*)\\.js$": "$1",
