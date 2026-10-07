@@ -8,10 +8,19 @@
  * every dashboard refresh.
  */
 
+import { Prisma } from "@prisma/client";
 import { db } from "../../db.js";
 import { cacheGet, cacheSet } from "../../redis.js";
 import { cursorFilter, decodeTipCursor, encodeTipCursor } from "./cursor.js";
 import { getCreatorBySlug } from "../creator/creator.service.js";
+import {
+  bpsToPercent,
+  parseSplits,
+  parseStroops,
+  unallocated,
+  type CollaboratorEarnings,
+  type Split,
+} from "./collaborators.js";
 
 const CACHE_TTL = 30; // seconds
 
@@ -447,5 +456,156 @@ export function toPublicTipsPage(
     })),
     nextCursor:
       hasMore && last ? encodeTipCursor(last.ledgerAt, last.txHash) : null,
+  };
+}
+
+// ── Collaborator earnings ─────────────────────────────────────────────────────
+
+export interface CollaboratorBreakdown {
+  /** Number of indexed tips the breakdown is derived from. */
+  tipCount: number;
+  /** Total received by the jar across those tips, in stroops. */
+  totalAmountRaw: string;
+  /**
+   * Stroops not accounted for by any recipient's share: the balance when the
+   * splits do not sum to 10000 bps, plus per-tip truncation dust. Always
+   * reported so the breakdown adds up to totalAmountRaw.
+   */
+  unallocatedRaw: string;
+  collaborators: CollaboratorEarnings[];
+  /** How the numbers were arrived at — see getCollaboratorEarnings. */
+  basis: {
+    mode: "current-splits";
+    /** When the creator record (splits included) was last written. */
+    splitsUpdatedAt: string;
+    /** True when no splits are recorded and the jar owner takes everything. */
+    impliedOwnerSplit: boolean;
+    note: string;
+  };
+}
+
+/**
+ * Earnings per recipient across a creator's indexed tips.
+ *
+ * Each recipient's total is the sum over tips of floor(amount * bps / 10000),
+ * computed in Postgres `numeric` and returned as text. Two details matter:
+ *
+ *   - It is summed per tip, not applied to the jar total. The contract splits
+ *     each transfer and truncates each share to a whole stroop, so applying
+ *     the percentage to the total instead would disagree with what the chain
+ *     actually paid out, by up to one stroop per recipient per tip.
+ *   - Nothing passes through a JS number. Stroops are i128; the sums arrive as
+ *     text and are handled as BigInt from there.
+ *
+ * Tips indexed before a split change: only the creator's *current* splits are
+ * stored, so they are what gets applied to every indexed tip, including tips
+ * that settled on chain under an earlier split. Historical splits are not
+ * recorded anywhere in this database, so a breakdown spanning a split change
+ * is an approximation of what each recipient actually received. The response
+ * says so in `basis`, and carries splitsUpdatedAt so a caller can see which
+ * tips (those after it) are exact.
+ */
+export async function getCollaboratorEarnings(
+  creatorId: string,
+): Promise<CollaboratorBreakdown> {
+  const key = `analytics:collaborators:${creatorId}`;
+  const cached = await cacheGet<CollaboratorBreakdown>(key);
+  if (cached) return cached;
+
+  const creator = await db.creator.findUnique({
+    where: { id: creatorId },
+    select: { walletAddress: true, splits: true, updatedAt: true },
+  });
+
+  if (!creator) {
+    throw Object.assign(new Error("Creator not found."), { statusCode: 404 });
+  }
+
+  const stored = parseSplits(creator.splits);
+
+  // No splits recorded means the jar is not shared: the contract pays the
+  // whole transfer to the jar owner. Reporting that as a single 100% row is
+  // more useful than an empty list, which reads as "nobody earned anything".
+  const impliedOwnerSplit = stored.length === 0;
+  const splits: Split[] = impliedOwnerSplit
+    ? [{ to: creator.walletAddress, bps: 10_000 }]
+    : stored;
+
+  const row = await sumSharesPerSplit(creatorId, splits);
+
+  const total = parseStroops(row.totalAmountRaw);
+  const shares = splits.map((_, i) => parseStroops(row.shares[i]));
+
+  const result: CollaboratorBreakdown = {
+    tipCount: Number(row.tipCount),
+    totalAmountRaw: total.toString(),
+    unallocatedRaw: unallocated(total, shares).toString(),
+    collaborators: splits.map((split, i) => ({
+      to: split.to,
+      bps: split.bps,
+      sharePercent: bpsToPercent(split.bps),
+      totalEarnedRaw: (shares[i] ?? 0n).toString(),
+    })),
+    basis: {
+      mode: "current-splits",
+      splitsUpdatedAt: creator.updatedAt.toISOString(),
+      impliedOwnerSplit,
+      note:
+        "The creator's current split percentages are applied to every indexed " +
+        "tip, including tips that settled on chain under an earlier split. " +
+        "Historical splits are not recorded, so a breakdown spanning a split " +
+        "change approximates what each recipient actually received; tips after " +
+        "splitsUpdatedAt are exact.",
+    },
+  };
+
+  await cacheSet(key, result, CACHE_TTL);
+  return result;
+}
+
+interface ShareSumRow {
+  tipCount: bigint;
+  totalAmountRaw: string | null;
+  [column: string]: unknown;
+}
+
+/**
+ * One aggregate query returning the tip count, the jar total, and one summed
+ * share per split.
+ *
+ * The share columns are built dynamically because there is one per split. The
+ * bps values are interpolated as query parameters, and the only raw fragment
+ * is the column alias — `s0`, `s1`, … — which this function generates from a
+ * loop index and never from user input.
+ */
+async function sumSharesPerSplit(
+  creatorId: string,
+  splits: Split[],
+): Promise<{
+  tipCount: bigint;
+  totalAmountRaw: string | null;
+  shares: string[];
+}> {
+  const shareColumns = splits.map(
+    (split, i) => Prisma.sql`
+      COALESCE(SUM(floor(amount::numeric * ${split.bps}::numeric / 10000)), 0)::text
+        AS ${Prisma.raw(`"s${i}"`)}`,
+  );
+
+  const rows = await db.$queryRaw<ShareSumRow[]>(Prisma.sql`
+    SELECT
+      COUNT(*)                                AS "tipCount",
+      COALESCE(SUM(amount::numeric), 0)::text AS "totalAmountRaw",
+      ${Prisma.join(shareColumns, ",")}
+    FROM "Tip"
+    WHERE "creatorId" = ${creatorId}
+  `);
+
+  const row = rows[0];
+
+  return {
+    tipCount: row?.tipCount ?? 0n,
+    totalAmountRaw: row?.totalAmountRaw ?? "0",
+    shares: splits.map((_, i) => String(row?.[`s${i}`] ?? "0")),
   };
 }

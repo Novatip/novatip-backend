@@ -9,6 +9,7 @@
  * GET /api/v1/analytics/top-supporters   — ranked supporter list (?limit=10)
  * GET /api/v1/analytics/recent           — live feed of recent tips
  *                                          (?limit=20&cursor=<opaque>)
+ * GET /api/v1/analytics/collaborators    — per-recipient earnings breakdown
  */
 
 import type { FastifyPluginAsync } from "fastify";
@@ -18,6 +19,7 @@ import {
   getTimeSeries,
   getTopSupporters,
   getRecentTips,
+  getCollaboratorEarnings,
   RECENT_TIPS_DEFAULT_LIMIT,
   RECENT_TIPS_MAX_LIMIT,
 } from "./analytics.service.js";
@@ -94,5 +96,12 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
       parsed.data.cursor ?? null,
     );
     return reply.send(page);
+  });
+
+  // ── GET /collaborators ─────────────────────────────────────────────────────
+  app.get("/collaborators", async (request, reply) => {
+    const { user } = request;
+    const breakdown = await getCollaboratorEarnings(user.sub);
+    return reply.send(breakdown);
   });
 };

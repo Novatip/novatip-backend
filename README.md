@@ -98,6 +98,7 @@ GET /analytics/totals        - Total tips, amount, supporters (JWT)
 GET /analytics/timeseries    - Daily breakdown ?days=30 (JWT)
 GET /analytics/top-supporters- Ranked supporters ?limit=10 (JWT)
 GET /analytics/recent        - Live tip feed ?limit=20&cursor=<opaque> (JWT)
+GET /analytics/collaborators - Per-recipient earnings breakdown (JWT)
 
 /analytics/recent is cursor-paginated. It takes ?limit= (1–100, default 20)
 and ?cursor=, and returns:
@@ -131,6 +132,45 @@ per UTC calendar day (00:00–23:59:59 UTC) up to and including today. Days
 with no tips are included with tipCount: 0 and amountRaw: "0" rather than
 omitted, so charts can plot the series directly without gap-filling. Day
 boundaries are UTC, not the requesting client's local time zone.
+
+/analytics/collaborators answers "how much has each of us earned" for a shared
+jar, which the jar-wide totals could not. It returns:
+
+    { "tipCount": 42,
+      "totalAmountRaw": "<stroops>",
+      "unallocatedRaw": "<stroops>",
+      "collaborators": [ { "to", "bps", "sharePercent", "totalEarnedRaw" } ],
+      "basis": { "mode": "current-splits", "splitsUpdatedAt": "<ISO 8601>",
+                 "impliedOwnerSplit": false, "note": "..." } }
+
+Every amount is stroops as a string and is handled as a BigInt end to end. A
+recipient's total is the sum over tips of floor(amount * bps / 10000), computed
+in Postgres `numeric`, not the percentage applied to the jar total: the
+contract splits each transfer and truncates each share to a whole stroop, so
+applying the percentage to the total would disagree with what the chain
+actually paid out by up to a stroop per recipient per tip. Nothing passes
+through a float — a JS number starts dropping low digits at about 90 billion
+stroops (~9,000 USDC), silently.
+
+unallocatedRaw is whatever the recipients' shares do not account for: the
+balance when the splits do not sum to 10000 bps (the contract pays it to the
+jar owner) plus the per-tip truncation dust. It is always reported, so
+collaborators + unallocatedRaw adds up to totalAmountRaw exactly.
+
+A creator with no splits recorded is not a shared jar: the contract pays the
+whole transfer to the jar owner, so the breakdown is a single 100% row for the
+creator's wallet address with "impliedOwnerSplit": true, rather than an empty
+list that would read as "nobody earned anything".
+
+Tips indexed before a split change: only the creator's current splits are
+stored — this database keeps no history of them — so the current percentages
+are applied to every indexed tip, including tips that settled on chain under an
+earlier split. A breakdown spanning a split change is therefore an
+approximation of what each recipient actually received. The response says so in
+basis.note and carries basis.splitsUpdatedAt, the last write to the creator
+record, so a caller can see that tips after that point are exact. Splits stored
+in a shape this endpoint cannot read fail with 500 and error.code
+"MALFORMED_SPLITS" rather than quietly dropping a recipient.
 
 GET  /public/:slug/recent    - Public supporter feed ?limit=20&cursor=<opaque>
 
