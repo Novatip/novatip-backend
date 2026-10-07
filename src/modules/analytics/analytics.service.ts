@@ -11,6 +11,7 @@
 import { db } from "../../db.js";
 import { cacheGet, cacheSet } from "../../redis.js";
 import { cursorFilter, decodeTipCursor, encodeTipCursor } from "./cursor.js";
+import { getCreatorBySlug } from "../creator/creator.service.js";
 
 const CACHE_TTL = 30; // seconds
 
@@ -318,5 +319,133 @@ export function toRecentTipsPage(
     // request that comes back empty.
     nextCursor:
       hasMore && last ? encodeTipCursor(last.ledgerAt, last.id) : null,
+  };
+}
+
+// ── Public recent tips ────────────────────────────────────────────────────────
+
+/**
+ * A tip as the public tip page sees it.
+ *
+ * Deliberately narrower than RecentTip: the sender address, amount, message
+ * and ledger time are all already public on chain, but the tip's row id and
+ * the creator's id are internal to this database and are not. Omitting them is
+ * the point of having a separate shape rather than reusing the dashboard one —
+ * a widened select on the dashboard query must not quietly become public.
+ */
+export interface PublicTip {
+  txHash: string;
+  fromAddress: string;
+  amount: string; // stroops as string (i128 precision)
+  message: string;
+  ledgerAt: string; // ISO 8601
+}
+
+export interface PublicTipsPage {
+  tips: PublicTip[];
+  nextCursor: string | null;
+}
+
+/**
+ * Page size ceiling for the public feed. Lower than the dashboard's: this is
+ * an unauthenticated route serving a supporter list on a public page, so the
+ * most an anonymous caller can ask for in one request is kept small.
+ */
+export const PUBLIC_TIPS_MAX_LIMIT = 50;
+
+/** Page size used when the caller does not ask for one. */
+export const PUBLIC_TIPS_DEFAULT_LIMIT = 20;
+
+/**
+ * Cached longer than the dashboard feed. The tip page is the high-traffic,
+ * unauthenticated surface, and a supporter list that is a few seconds behind
+ * is indistinguishable to a visitor from one that is live.
+ */
+const PUBLIC_CACHE_TTL = 15; // seconds
+
+/** How long a public feed response stays fresh, for the route's Cache-Control. */
+export const PUBLIC_TIPS_CACHE_SECONDS = PUBLIC_CACHE_TTL;
+
+/**
+ * One page of a creator's tips for the public tip page, newest first.
+ *
+ * Resolved by public slug rather than creator id — the caller has no account
+ * and no token, so there is no id to scope by. getCreatorBySlug is the same
+ * cached, allowlisted read the public creator endpoint and the resolver use,
+ * and it is what raises the 404 for an unknown slug.
+ *
+ * Ordering and cursor semantics match getRecentTips, except that the
+ * tiebreaker after ledgerAt is the transaction hash rather than the row id:
+ * both are unique, and the hash is already public on chain, so the cursor
+ * carries nothing the response does not.
+ */
+export async function getPublicRecentTips(
+  slug: string,
+  limit = PUBLIC_TIPS_DEFAULT_LIMIT,
+  cursor?: string | null,
+): Promise<PublicTipsPage> {
+  const take = Math.min(Math.max(limit, 1), PUBLIC_TIPS_MAX_LIMIT);
+  const after = cursor ? decodeTipCursor(cursor) : null;
+
+  const key = `analytics:public-recent:${slug}:${take}:${cursor ?? "head"}`;
+  const cached = await cacheGet<PublicTipsPage>(key);
+  if (cached) return cached;
+
+  const creator = await getCreatorBySlug(slug);
+
+  const rows = await db.tip.findMany({
+    where: {
+      creatorId: creator.id,
+      ...(after ? cursorFilter(after, "txHash") : {}),
+    },
+    orderBy: [{ ledgerAt: "desc" }, { txHash: "desc" }],
+    take: take + 1,
+    // An allowlist, not a convenience: this is what keeps the row id and the
+    // creator id out of an unauthenticated response and out of the cache.
+    select: {
+      txHash: true,
+      fromAddress: true,
+      amount: true,
+      message: true,
+      ledgerAt: true,
+    },
+  });
+
+  const result = toPublicTipsPage(rows, take);
+
+  await cacheSet(key, result, PUBLIC_CACHE_TTL);
+  return result;
+}
+
+/**
+ * Trim the lookahead row and derive the next cursor for the public feed.
+ *
+ * Exported for tests, like toRecentTipsPage — and so the shape of a public
+ * response is asserted in one place rather than inferred from a select.
+ */
+export function toPublicTipsPage(
+  rows: Array<{
+    txHash: string;
+    fromAddress: string;
+    amount: string;
+    message: string;
+    ledgerAt: Date;
+  }>,
+  take: number,
+): PublicTipsPage {
+  const hasMore = rows.length > take;
+  const page = hasMore ? rows.slice(0, take) : rows;
+  const last = page[page.length - 1];
+
+  return {
+    tips: page.map((row) => ({
+      txHash: row.txHash,
+      fromAddress: row.fromAddress,
+      amount: row.amount,
+      message: row.message,
+      ledgerAt: row.ledgerAt.toISOString(),
+    })),
+    nextCursor:
+      hasMore && last ? encodeTipCursor(last.ledgerAt, last.txHash) : null,
   };
 }

@@ -132,6 +132,37 @@ with no tips are included with tipCount: 0 and amountRaw: "0" rather than
 omitted, so charts can plot the series directly without gap-filling. Day
 boundaries are UTC, not the requesting client's local time zone.
 
+GET  /public/:slug/recent    - Public supporter feed ?limit=20&cursor=<opaque>
+
+/public/:slug/recent is the only unauthenticated view of a creator's tips. The
+public tip page shows a supporter feed to visitors who have no account, and
+every /analytics route requires the creator's own token, so that feed could not
+be read at all before.
+
+It takes ?limit= (1–50, default 20) and ?cursor=, and returns:
+
+    { "tips": [ { "txHash", "fromAddress", "amount", "message", "ledgerAt" } ],
+      "nextCursor": "<opaque string>" | null }
+
+The shape is deliberately narrower than /analytics/recent. Sender address,
+amount, message and ledger time are already public on chain; the tip's row id
+and the creator's id are internal to this database and are omitted. They are
+not merely stripped from the response — they are not in the query's select, so
+they never reach the Redis cache either. The cursor is keyed on ("ledgerAt",
+txHash) rather than the row id for the same reason: the hash is public on
+chain, so the cursor carries nothing the response does not.
+
+The page size ceiling is lower than the dashboard's (50 against 100) because
+this is an anonymous surface. An unknown slug is a 404, not an empty feed —
+otherwise it would be indistinguishable from a creator who has no tips yet.
+
+Responses are cached in Redis for 15 seconds and carry
+`Cache-Control: public, max-age=15`, so a browser, a CDN or the frontend's own
+fetch cache can reuse one response across visitors to a popular tip page. The
+routes live in their own Fastify plugin (src/modules/public/) rather than as an
+auth carve-out inside the analytics plugin, whose onRequest hook applies to
+every route registered in it.
+
 GET    /webhooks             - List webhooks (JWT)
 POST   /webhooks             - Register webhook (JWT)
 DELETE /webhooks/:id         - Remove webhook (JWT)
