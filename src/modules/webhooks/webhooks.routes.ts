@@ -38,14 +38,15 @@ const EnabledBody = z.object({
 });
 
 /**
- * Delivery-history paging.
+ * Delivery-history paging. Exported so the bounds can be unit tested without
+ * standing up the server — they are the endpoint's contract, not a detail.
  *
  * The bounds are stated in the schema rather than clamped afterwards, so
  * ?limit=500 is a 400 naming the ceiling instead of a silent 100 — a caller
  * paging through history needs to know its page was shortened. Query values
  * arrive as strings, hence the coercion.
  */
-const DeliveryQuery = z.object({
+export const DeliveryQuery = z.object({
   limit: z.coerce
     .number()
     .int()

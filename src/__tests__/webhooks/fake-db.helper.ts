@@ -112,6 +112,9 @@ export interface FakeDb {
   seedWebhook(
     webhook: Partial<FakeWebhook> & { creatorId: string },
   ): FakeWebhook;
+  seedDelivery(
+    delivery: Partial<FakeDelivery> & { webhookId: string },
+  ): FakeDelivery;
 }
 
 export function createFakeDb(): FakeDb {
@@ -316,6 +319,23 @@ export function createFakeDb(): FakeDb {
         jarId: creator.jarId ?? `@${creator.id}`,
       };
       creators.set(row.jarId, row);
+      return row;
+    },
+
+    seedDelivery(delivery) {
+      const row: FakeDelivery = {
+        id: delivery.id ?? nextId("wd"),
+        webhookId: delivery.webhookId,
+        statusCode: delivery.statusCode ?? 200,
+        success: delivery.success ?? true,
+        payload: delivery.payload ?? { event: "tip.received" },
+        response: delivery.response ?? "ok",
+        // Default to the monotonic clock, so a loop of seeds comes out in a
+        // known order — real timestamps collide at millisecond resolution and
+        // a "newest first" assertion against a tie proves nothing.
+        attemptedAt: delivery.attemptedAt ?? tick(),
+      };
+      deliveries.push(row);
       return row;
     },
 
