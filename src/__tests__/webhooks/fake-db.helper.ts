@@ -179,6 +179,9 @@ export function createFakeDb(): FakeDb {
         return page.map((row) => project(row, select));
       },
 
+      count: async ({ where }: { where: WebhookWhere }): Promise<number> =>
+        [...webhooks.values()].filter((row) => matches(row, where)).length,
+
       findFirst: async ({
         where,
         select,
@@ -307,8 +310,24 @@ export function createFakeDb(): FakeDb {
     },
   };
 
+  /**
+   * Interactive transaction, attached after the literal rather than inside it:
+   * the callback is handed this same client, and a member referring to `db`
+   * from within its own initializer would make the object's type circular.
+   *
+   * The callback runs for real, so a read-then-write sequence executes rather
+   * than being skipped. There is no rollback — nothing here needs one, and a
+   * double that pretended to roll back without doing it would be worse than
+   * one that says it does not. A test that cares about atomicity asserts that
+   * the work went through this method, not that a failure undid it.
+   */
+  const client = Object.assign(db, {
+    $transaction: async <T>(fn: (tx: typeof db) => Promise<T>): Promise<T> =>
+      fn(db),
+  });
+
   return {
-    db,
+    db: client,
     webhooks,
     deliveries,
     creators,

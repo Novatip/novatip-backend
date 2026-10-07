@@ -15,6 +15,7 @@ import { db } from "../../db.js";
 import type { TipEvent } from "@novatip/sdk";
 import { stroopsToUsdc } from "@novatip/sdk";
 import { logger } from "../../utils/logger.js";
+import { assertWebhookLimit, webhookLimit } from "./limit.js";
 
 const webhookLogger = logger.child({ component: "webhook" });
 
@@ -277,12 +278,30 @@ export function generateWebhookSecret(): string {
   return randomBytes(SECRET_BYTES).toString("hex");
 }
 
+/**
+ * Register a webhook, rejecting the request once the creator is at the cap.
+ *
+ * The count and the insert run in one interactive transaction: two concurrent
+ * registrations that each read the pre-insert count would otherwise both pass
+ * the check and leave the creator one over the limit.
+ */
 export async function createWebhook(
   creatorId: string,
   url: string,
   secret: string,
 ) {
-  return db.webhook.create({ data: { creatorId, url, secret } });
+  const limit = webhookLimit();
+
+  // No cap configured — skip the extra round trip entirely.
+  if (limit === null) {
+    return db.webhook.create({ data: { creatorId, url, secret } });
+  }
+
+  return db.$transaction(async (tx) => {
+    const existing = await tx.webhook.count({ where: { creatorId } });
+    assertWebhookLimit(existing, limit);
+    return tx.webhook.create({ data: { creatorId, url, secret } });
+  });
 }
 
 export async function listWebhooks(creatorId: string, limit = 50, offset = 0) {

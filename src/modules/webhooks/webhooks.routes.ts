@@ -3,6 +3,8 @@
  *
  * GET    /api/v1/webhooks        — list creator's webhooks (auth)
  * POST   /api/v1/webhooks        — register a new webhook (auth)
+ *                                  409 WEBHOOK_LIMIT_REACHED once the creator
+ *                                  holds MAX_WEBHOOKS_PER_CREATOR webhooks
  * PATCH  /api/v1/webhooks/:id    — enable or disable a webhook (auth)
  * DELETE /api/v1/webhooks/:id    — remove a webhook (auth)
  *

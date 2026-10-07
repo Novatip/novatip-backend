@@ -36,6 +36,7 @@ USDC_CONTRACT_ID - USDC Stellar Asset Contract ID
 INDEXER_START_LEDGER - Ledger to begin indexing from (default: 0)
 RESEND_API_KEY - Resend API key (skip to disable email)
 APP_BASE_URL - Frontend base URL (default: http://localhost:3000)
+MAX_WEBHOOKS_PER_CREATOR - Most webhooks one creator may register (default: 5, 0 removes the cap)
 WEBHOOK_DELIVERY_RETENTION_DAYS - Prune successful deliveries older than this (default: 30, 0 disables)
 WEBHOOK_DELIVERY_FAILURE_RETENTION_DAYS - Prune failed deliveries older than this (default: 90, 0 disables)
 WEBHOOK_DELIVERY_PRUNE_BATCH_SIZE - Rows deleted per statement (default: 500)
@@ -96,7 +97,35 @@ new integrations.
 GET /analytics/totals        - Total tips, amount, supporters (JWT)
 GET /analytics/timeseries    - Daily breakdown ?days=30 (JWT)
 GET /analytics/top-supporters- Ranked supporters ?limit=10 (JWT)
-GET /analytics/recent        - Live tip feed ?limit=20 (JWT)
+GET /analytics/recent        - Live tip feed ?limit=20&cursor=<opaque> (JWT)
+GET /analytics/collaborators - Per-recipient earnings breakdown (JWT)
+
+/analytics/recent is cursor-paginated. It takes ?limit= (1–100, default 20)
+and ?cursor=, and returns:
+
+    { "tips": [ { "id", "txHash", "fromAddress", "amount", "message",
+                  "ledgerAt" } ],
+      "nextCursor": "<opaque string>" | null }
+
+Pass the nextCursor from one response back as ?cursor= to get the page after
+it. nextCursor is null when the page reaches the end of the creator's history,
+so a client pages until it sees null rather than until it sees an empty page.
+amount is stroops as a string (i128 precision) and ledgerAt is ISO 8601 UTC.
+
+The cursor is opaque: it encodes a position in the result set, not a field a
+client composes, and its contents are not part of the API. A cursor this server
+did not issue is rejected with 400 and error.code "INVALID_CURSOR" rather than
+being paged from approximately the right place.
+
+Paging is stable across tips arriving mid-scroll. The ordering is
+("ledgerAt" DESC, id DESC) and the cursor names the row the previous page ended
+on, so a tip indexed at the head between two requests cannot shift a boundary
+that has already been handed out — a client never sees a row twice and never
+skips the row a new arrival would have displaced. The id tiebreaker matters:
+ledgerAt is not unique, so a page boundary can land inside a group of tips
+sharing a ledger close time, and ordering on ledgerAt alone would repeat or
+drop the rest of that group. The new arrival is simply not in the pages already
+served; it is picked up by the next request to the head.
 
 /analytics/timeseries always returns exactly `days` points, oldest first, one
 per UTC calendar day (00:00–23:59:59 UTC) up to and including today. Days
@@ -104,10 +133,92 @@ with no tips are included with tipCount: 0 and amountRaw: "0" rather than
 omitted, so charts can plot the series directly without gap-filling. Day
 boundaries are UTC, not the requesting client's local time zone.
 
+/analytics/collaborators answers "how much has each of us earned" for a shared
+jar, which the jar-wide totals could not. It returns:
+
+    { "tipCount": 42,
+      "totalAmountRaw": "<stroops>",
+      "unallocatedRaw": "<stroops>",
+      "collaborators": [ { "to", "bps", "sharePercent", "totalEarnedRaw" } ],
+      "basis": { "mode": "current-splits", "splitsUpdatedAt": "<ISO 8601>",
+                 "impliedOwnerSplit": false, "note": "..." } }
+
+Every amount is stroops as a string and is handled as a BigInt end to end. A
+recipient's total is the sum over tips of floor(amount * bps / 10000), computed
+in Postgres `numeric`, not the percentage applied to the jar total: the
+contract splits each transfer and truncates each share to a whole stroop, so
+applying the percentage to the total would disagree with what the chain
+actually paid out by up to a stroop per recipient per tip. Nothing passes
+through a float — a JS number starts dropping low digits at about 90 billion
+stroops (~9,000 USDC), silently.
+
+unallocatedRaw is whatever the recipients' shares do not account for: the
+balance when the splits do not sum to 10000 bps (the contract pays it to the
+jar owner) plus the per-tip truncation dust. It is always reported, so
+collaborators + unallocatedRaw adds up to totalAmountRaw exactly.
+
+A creator with no splits recorded is not a shared jar: the contract pays the
+whole transfer to the jar owner, so the breakdown is a single 100% row for the
+creator's wallet address with "impliedOwnerSplit": true, rather than an empty
+list that would read as "nobody earned anything".
+
+Tips indexed before a split change: only the creator's current splits are
+stored — this database keeps no history of them — so the current percentages
+are applied to every indexed tip, including tips that settled on chain under an
+earlier split. A breakdown spanning a split change is therefore an
+approximation of what each recipient actually received. The response says so in
+basis.note and carries basis.splitsUpdatedAt, the last write to the creator
+record, so a caller can see that tips after that point are exact. Splits stored
+in a shape this endpoint cannot read fail with 500 and error.code
+"MALFORMED_SPLITS" rather than quietly dropping a recipient.
+
+GET  /public/:slug/recent    - Public supporter feed ?limit=20&cursor=<opaque>
+
+/public/:slug/recent is the only unauthenticated view of a creator's tips. The
+public tip page shows a supporter feed to visitors who have no account, and
+every /analytics route requires the creator's own token, so that feed could not
+be read at all before.
+
+It takes ?limit= (1–50, default 20) and ?cursor=, and returns:
+
+    { "tips": [ { "txHash", "fromAddress", "amount", "message", "ledgerAt" } ],
+      "nextCursor": "<opaque string>" | null }
+
+The shape is deliberately narrower than /analytics/recent. Sender address,
+amount, message and ledger time are already public on chain; the tip's row id
+and the creator's id are internal to this database and are omitted. They are
+not merely stripped from the response — they are not in the query's select, so
+they never reach the Redis cache either. The cursor is keyed on ("ledgerAt",
+txHash) rather than the row id for the same reason: the hash is public on
+chain, so the cursor carries nothing the response does not.
+
+The page size ceiling is lower than the dashboard's (50 against 100) because
+this is an anonymous surface. An unknown slug is a 404, not an empty feed —
+otherwise it would be indistinguishable from a creator who has no tips yet.
+
+Responses are cached in Redis for 15 seconds and carry
+`Cache-Control: public, max-age=15`, so a browser, a CDN or the frontend's own
+fetch cache can reuse one response across visitors to a popular tip page. The
+routes live in their own Fastify plugin (src/modules/public/) rather than as an
+auth carve-out inside the analytics plugin, whose onRequest hook applies to
+every route registered in it.
+
 GET    /webhooks             - List webhooks (JWT)
 POST   /webhooks             - Register webhook (JWT)
 PATCH  /webhooks/:id         - Enable or disable a webhook (JWT)
 DELETE /webhooks/:id         - Remove webhook (JWT)
+
+POST /webhooks is capped at MAX_WEBHOOKS_PER_CREATOR endpoints per creator
+(default 5). Registering beyond it returns 409 with error.code
+"WEBHOOK_LIMIT_REACHED" and a message naming the limit and the env var that
+sets it; delete an existing webhook to make room. The cap counts every row the
+creator holds, enabled or not — PATCH /webhooks/:id can re-enable a disabled
+one at any time, so excluding them would make the cap trivial to walk around.
+The count and the insert run in one transaction, so two concurrent
+registrations cannot both pass the check. Setting MAX_WEBHOOKS_PER_CREATOR=0
+removes the cap, which is only sensible for a trusted single-tenant deployment:
+dispatchWebhooks fans out to every enabled endpoint on every indexed tip, each
+with a five second timeout and a delivery row of its own.
 
 PATCH /webhooks/:id takes `{ "enabled": true | false }` and returns the updated
 webhook. It is the way to pause a webhook whose receiver is broken: the secret
