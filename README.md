@@ -121,6 +121,41 @@ retrying after a dropped response cannot accidentally re-enable a webhook it
 meant to pause. A webhook belonging to another creator answers 404, the same as
 one that does not exist.
 
+GET  /webhooks/:id/deliveries - Recent delivery attempts (JWT)
+
+Every dispatch attempt is already recorded in WebhookDelivery; this is the way
+to read it back. Attempts come newest first, each entry carrying the HTTP status
+code the receiver returned, whether it counted as a success (any 2xx), when it
+was attempted, and up to 1 KB of the response body:
+
+    {
+      "deliveries": [
+        {
+          "id": "clz...",
+          "statusCode": 500,
+          "success": false,
+          "response": "Internal Server Error",
+          "attemptedAt": "2026-10-07T12:34:56.789Z"
+        }
+      ]
+    }
+
+statusCode and response are null when the request never completed — a timeout
+(5s) or a connection failure genuinely has no status, and response then holds
+the transport error instead.
+
+The request payload is not returned: it is the largest column in the row and the
+creator already knows its shape (see Webhook Signatures), whereas what they
+cannot otherwise see is what came back.
+
+Paging is `?limit=` (1–100, default 20) and `?offset=`. A limit above the
+ceiling is a 400 naming it rather than a silently shortened page. A webhook that
+has not fired yet returns an empty array; one belonging to another creator
+returns 404.
+
+Note that history is not kept forever — see Webhook Delivery Retention for the
+windows, which default to 30 days for successes and 90 for failures.
+
 ## Indexer
 
 Polls Soroban RPC every 6s for TipReceived events, persists to PostgreSQL,

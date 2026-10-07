@@ -110,7 +110,12 @@ model WebhookDelivery {
   response   String?
   attemptedAt DateTime @default(now())
 
-  @@index([webhookId])
+  /// Serves the delivery-history endpoint's
+  /// `webhookId = ? ORDER BY "attemptedAt" DESC LIMIT n`, which would otherwise
+  /// read every row for the webhook and sort it to return twenty. Replaces the
+  /// bare @@index([webhookId]) — a webhookId-leading composite serves the same
+  /// lookups, and a second index on the fastest-growing table is not free.
+  @@index([webhookId, attemptedAt])
   /// Supports the retention prune's `success = ? AND attemptedAt < ?` scan.
   /// Successes and failures age out on different schedules, so success leads
   /// the index and attemptedAt gives the range within each half.

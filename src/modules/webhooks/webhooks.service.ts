@@ -217,6 +217,70 @@ export async function setWebhookEnabled(
   });
 }
 
+// ── Delivery history ──────────────────────────────────────────────────────────
+
+/** Page size used when the caller does not ask for one. */
+export const DEFAULT_DELIVERY_PAGE_SIZE = 20;
+
+/**
+ * Hard ceiling on a delivery page. Each row carries up to 1 KB of response
+ * body, so an unbounded page over a busy webhook is a multi-megabyte response
+ * assembled in memory — the cap is what keeps this endpoint cheap.
+ */
+export const MAX_DELIVERY_PAGE_SIZE = 100;
+
+/**
+ * The columns a delivery attempt is reported by.
+ *
+ * `payload` is omitted. It is what the server sent, which the creator already
+ * knows the shape of, and it is the largest column in the row; what they
+ * cannot otherwise see is what came *back*, which is `statusCode` and
+ * `response`.
+ */
+const deliverySelect = {
+  id: true,
+  statusCode: true,
+  success: true,
+  response: true,
+  attemptedAt: true,
+} as const;
+
+/**
+ * Recent delivery attempts for one webhook, newest first.
+ *
+ * Returns null — not an empty array — when the caller owns no webhook with
+ * that id, so the route can answer 404 rather than conflating "not yours"
+ * with "nothing delivered yet".
+ *
+ * Ownership is established by reading the webhook first. WebhookDelivery
+ * carries no creatorId of its own, and a webhook never changes hands (no route
+ * writes creatorId), so the check cannot go stale between the two statements.
+ *
+ * `response` is already bounded to 1 KB at write time (MAX_BODY_SIZE in
+ * deliver), so rows are returned as stored.
+ */
+export async function listWebhookDeliveries(
+  creatorId: string,
+  webhookId: string,
+  limit = DEFAULT_DELIVERY_PAGE_SIZE,
+  offset = 0,
+) {
+  const owned = await db.webhook.findFirst({
+    where: { id: webhookId, creatorId },
+    select: { id: true },
+  });
+
+  if (!owned) return null;
+
+  return db.webhookDelivery.findMany({
+    where: { webhookId },
+    orderBy: { attemptedAt: "desc" },
+    take: Math.min(limit, MAX_DELIVERY_PAGE_SIZE),
+    skip: offset,
+    select: deliverySelect,
+  });
+}
+
 export async function deleteWebhook(
   creatorId: string,
   webhookId: string,

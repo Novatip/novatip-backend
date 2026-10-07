@@ -5,6 +5,8 @@
  * POST   /api/v1/webhooks        — register a new webhook (auth)
  * PATCH  /api/v1/webhooks/:id    — enable or disable a webhook (auth)
  * DELETE /api/v1/webhooks/:id    — remove a webhook (auth)
+ *
+ * GET    /api/v1/webhooks/:id/deliveries — recent delivery attempts (auth)
  */
 
 import type { FastifyPluginAsync } from "fastify";
@@ -12,8 +14,11 @@ import { z } from "zod";
 import {
   createWebhook,
   listWebhooks,
+  listWebhookDeliveries,
   setWebhookEnabled,
   deleteWebhook,
+  DEFAULT_DELIVERY_PAGE_SIZE,
+  MAX_DELIVERY_PAGE_SIZE,
 } from "./webhooks.service.js";
 import { randomBytes } from "crypto";
 
@@ -30,6 +35,24 @@ const CreateBody = z.object({
  */
 const EnabledBody = z.object({
   enabled: z.boolean(),
+});
+
+/**
+ * Delivery-history paging.
+ *
+ * The bounds are stated in the schema rather than clamped afterwards, so
+ * ?limit=500 is a 400 naming the ceiling instead of a silent 100 — a caller
+ * paging through history needs to know its page was shortened. Query values
+ * arrive as strings, hence the coercion.
+ */
+const DeliveryQuery = z.object({
+  limit: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(MAX_DELIVERY_PAGE_SIZE)
+    .default(DEFAULT_DELIVERY_PAGE_SIZE),
+  offset: z.coerce.number().int().min(0).default(0),
 });
 
 export const webhookRoutes: FastifyPluginAsync = async (app) => {
@@ -93,6 +116,31 @@ export const webhookRoutes: FastifyPluginAsync = async (app) => {
     }
 
     return reply.send({ webhook });
+  });
+
+  // ── GET /:id/deliveries ────────────────────────────────────────────────────
+  app.get("/:id/deliveries", async (request, reply) => {
+    const query = DeliveryQuery.safeParse(request.query);
+    if (!query.success) {
+      return reply.status(400).send({ error: query.error.flatten() });
+    }
+
+    const { user } = request;
+    const { id } = request.params as { id: string };
+    const deliveries = await listWebhookDeliveries(
+      user.sub,
+      id,
+      query.data.limit,
+      query.data.offset,
+    );
+
+    // null means the caller owns no webhook with that id. A webhook that
+    // simply has not fired yet returns an empty array, not a 404.
+    if (deliveries === null) {
+      return reply.status(404).send({ error: "Webhook not found" });
+    }
+
+    return reply.send({ deliveries });
   });
 
   // ── DELETE /:id ────────────────────────────────────────────────────────────
