@@ -106,7 +106,20 @@ boundaries are UTC, not the requesting client's local time zone.
 
 GET    /webhooks             - List webhooks (JWT)
 POST   /webhooks             - Register webhook (JWT)
+PATCH  /webhooks/:id         - Enable or disable a webhook (JWT)
 DELETE /webhooks/:id         - Remove webhook (JWT)
+
+PATCH /webhooks/:id takes `{ "enabled": true | false }` and returns the updated
+webhook. It is the way to pause a webhook whose receiver is broken: the secret
+is left alone, so re-enabling resumes deliveries against the secret the receiver
+already holds — no re-registration and no new secret to distribute. Only the
+`enabled` flag is settable this way; a different URL is a different receiver and
+should get its own webhook and secret.
+
+The body sends the state it wants rather than asking for a flip, so a client
+retrying after a dropped response cannot accidentally re-enable a webhook it
+meant to pause. A webhook belonging to another creator answers 404, the same as
+one that does not exist.
 
 ## Indexer
 

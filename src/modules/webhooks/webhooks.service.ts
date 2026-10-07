@@ -151,6 +151,22 @@ function sign(body: string, secret: string): string {
 
 // ── CRUD (creator manages their own webhooks) ─────────────────────────────────
 
+/**
+ * The columns a webhook is described by in API responses.
+ *
+ * `secret` is deliberately absent. It is returned exactly once — in the
+ * registration response, and again when it is rotated — and never read back
+ * out of a listing or an update, so a leaked access token cannot be turned
+ * into the ability to forge signed deliveries.
+ */
+const webhookSelect = {
+  id: true,
+  url: true,
+  enabled: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
+
 export async function createWebhook(
   creatorId: string,
   url: string,
@@ -165,7 +181,39 @@ export async function listWebhooks(creatorId: string, limit = 50, offset = 0) {
     orderBy: { createdAt: "desc" },
     take: limit,
     skip: offset,
-    select: { id: true, url: true, enabled: true, createdAt: true },
+    select: webhookSelect,
+  });
+}
+
+/**
+ * Flip a webhook's `enabled` flag, returning the updated row or null when the
+ * caller does not own a webhook with that id.
+ *
+ * The write is scoped by creatorId as well as id, so ownership is enforced by
+ * the same statement that updates rather than by a read beforehand — there is
+ * no window in which the row could change hands in between. A count of 0 means
+ * the webhook is missing *or* belongs to someone else; the route answers 404
+ * either way, so it never confirms another creator's webhook exists.
+ *
+ * The secret is untouched. dispatchWebhooks already filters on `enabled`, so
+ * disabling stops deliveries immediately and re-enabling resumes them with the
+ * secret the receiver already holds — no re-registration, no new secret.
+ */
+export async function setWebhookEnabled(
+  creatorId: string,
+  webhookId: string,
+  enabled: boolean,
+) {
+  const { count } = await db.webhook.updateMany({
+    where: { id: webhookId, creatorId },
+    data: { enabled },
+  });
+
+  if (count === 0) return null;
+
+  return db.webhook.findUnique({
+    where: { id: webhookId },
+    select: webhookSelect,
   });
 }
 
