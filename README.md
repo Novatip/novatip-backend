@@ -44,6 +44,8 @@ WEBHOOK_DELIVERY_PRUNE_INTERVAL_MINUTES - How often the pruner runs (default: 60
 
 ## API Overview  (base: /api/v1)
 
+> **OpenAPI Specification**: A machine-readable OpenAPI 3.0.3 specification is published at [`/api/v1/docs/openapi.json`](http://localhost:3001/api/v1/docs/openapi.json). An interactive API explorer is served at [`/api/v1/docs`](http://localhost:3001/api/v1/docs).
+
 GET  /health                 - Simple liveness ping
 GET  /health/live            - Liveness (process up, no dependency checks)
 GET  /health/ready           - Readiness (PostgreSQL + Redis reachable; 503 if not)

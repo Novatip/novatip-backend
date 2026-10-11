@@ -92,6 +92,8 @@ export async function buildServer(): Promise<FastifyInstance> {
         await import("./modules/webhooks/webhooks.routes.js");
       const { publicRoutes } =
         await import("./modules/public/public.routes.js");
+      const { docsRoutes } =
+        await import("./modules/docs/docs.routes.js");
 
       await app.register(healthRoutes, { prefix: "/health" });
       await app.register(authRoutes, { prefix: "/auth" });
@@ -101,6 +103,7 @@ export async function buildServer(): Promise<FastifyInstance> {
       await app.register(analyticsRoutes, { prefix: "/analytics" });
       await app.register(webhookRoutes, { prefix: "/webhooks" });
       await app.register(publicRoutes, { prefix: "/public" });
+      await app.register(docsRoutes, { prefix: "/docs" });
     },
     { prefix: "/api/v1" },
   );
