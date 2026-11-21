@@ -14,6 +14,9 @@ const envKeys = [
   "MAX_BODY_SIZE",
   "WEBHOOK_MAX_PAYLOAD_SIZE",
   "MAX_PAYLOAD_SIZE",
+  "BUILD_COMMIT",
+  "GIT_COMMIT",
+  "npm_package_git_commit",
 ] as const;
 const originalEnv = Object.fromEntries(
   envKeys.map((key) => [key, process.env[key]]),
@@ -43,6 +46,9 @@ beforeEach(() => {
   delete process.env["MAX_BODY_SIZE"];
   delete process.env["WEBHOOK_MAX_PAYLOAD_SIZE"];
   delete process.env["MAX_PAYLOAD_SIZE"];
+  delete process.env["BUILD_COMMIT"];
+  delete process.env["GIT_COMMIT"];
+  delete process.env["npm_package_git_commit"];
 });
 
 afterEach(() => {
@@ -204,5 +210,22 @@ describe("config.webhooks", () => {
       },
     });
     expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it("resolves buildCommit with BUILD_COMMIT > GIT_COMMIT > npm_package_git_commit > unknown", async () => {
+    const cfg = await loadConfig();
+    expect(cfg.buildCommit).toBe("unknown");
+
+    process.env["npm_package_git_commit"] = "  npm-sha  ";
+    expect(cfg.buildCommit).toBe("npm-sha");
+
+    process.env["GIT_COMMIT"] = "git-sha";
+    expect(cfg.buildCommit).toBe("git-sha");
+
+    process.env["BUILD_COMMIT"] = "build-sha";
+    expect(cfg.buildCommit).toBe("build-sha");
+
+    process.env["BUILD_COMMIT"] = "   ";
+    expect(cfg.buildCommit).toBe("git-sha");
   });
 });
