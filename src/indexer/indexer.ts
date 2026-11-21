@@ -41,6 +41,11 @@ import {
   recordPollError,
   recordSuccessfulPoll,
 } from "./status.js";
+import {
+  recordTipIndexed,
+  updateIndexerCursor,
+  updateIndexerLag,
+} from "../modules/metrics/metrics.service.js";
 
 /**
  * How often (in ms) the indexer loop polls the Soroban RPC for new TipReceived events.
@@ -279,6 +284,7 @@ async function handleEvent(event: TipEvent): Promise<void> {
   const isNew = await persistTip(event, txHash);
 
   if (isNew) {
+    recordTipIndexed();
     enqueueWebhookDispatch(event);
 
     try {
