@@ -348,6 +348,27 @@ export const openApiSpecification = {
         },
       }),
     },
+    "/creators/tips/{tipId}/message": {
+      patch: operation({
+        summary: "Hide or unhide a tip message",
+        description:
+          "Hides a tip's message from the creator's public tip feed, or shows it again. The tip itself is unaffected. Only tips received by the authenticated creator can be changed.",
+        success: json(
+          "The tip's updated message visibility.",
+          schema("TipMessageVisibilityResponse"),
+        ),
+        parameters: [pathParameter("tipId", "Tip identifier.")],
+        requestBody: requestBody(schema("MessageVisibilityRequest")),
+        secured: true,
+        extraResponses: {
+          "400": validationError,
+          "404": json(
+            "No tip with this ID belongs to the authenticated creator.",
+            schema("ErrorResponse"),
+          ),
+        },
+      }),
+    },
     "/resolve/{slug}": {
       get: operation({
         summary: "Resolve the tip-page data for a creator slug",
@@ -895,6 +916,14 @@ export const openApiSpecification = {
             format: "date-time",
             nullable: true,
           },
+          emailEnabled: {
+            type: "boolean",
+            description: "Whether tip-notification emails are switched on.",
+          },
+          webhookEnabled: {
+            type: "boolean",
+            description: "Whether tip webhooks are dispatched.",
+          },
           jarId: { type: "string" },
           splits: { type: "array", items: schema("Split") },
           createdAt: { type: "string", format: "date-time" },
@@ -909,6 +938,8 @@ export const openApiSpecification = {
           "avatarUrl",
           "email",
           "emailVerifiedAt",
+          "emailEnabled",
+          "webhookEnabled",
           "jarId",
           "splits",
           "createdAt",
@@ -988,6 +1019,30 @@ export const openApiSpecification = {
           slug: { type: "string", minLength: 3, maxLength: 32 },
         },
         required: ["slug"],
+      },
+      MessageVisibilityRequest: {
+        type: "object",
+        properties: {
+          hidden: {
+            type: "boolean",
+            description: "true hides the message; false shows it again.",
+          },
+        },
+        required: ["hidden"],
+      },
+      TipMessageVisibilityResponse: {
+        type: "object",
+        properties: {
+          tip: {
+            type: "object",
+            properties: {
+              id: { type: "string" },
+              messageHidden: { type: "boolean" },
+            },
+            required: ["id", "messageHidden"],
+          },
+        },
+        required: ["tip"],
       },
       ResolveResponse: {
         type: "object",

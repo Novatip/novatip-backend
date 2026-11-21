@@ -148,7 +148,7 @@ const jwtExpiresInSeconds = (() => {
     w: 604_800,
     y: 31_557_600,
   };
-  const seconds = Number(match[1]) * multiplier[match[2]!];
+  const seconds = Number(match[1]) * multiplier[match[2]!]!;
   if (!Number.isSafeInteger(seconds)) {
     throw new Error("JWT_EXPIRES_IN exceeds the supported duration");
   }
@@ -431,4 +431,22 @@ export const config = {
    * Defaults to 60 seconds.
    */
   connectionTimeoutMs: optionalInt("CONNECTION_TIMEOUT_MS", 60_000, 1),
+
+  /**
+   * Whether GET /metrics serves Prometheus output. Off by default. Read on
+   * access rather than once at import, like everything above, so a test can
+   * build one server with metrics off and another with them on in the same
+   * process.
+   */
+  get metricsEnabled(): boolean {
+    return optionalBoolean("METRICS_ENABLED", false);
+  },
+
+  /**
+   * Bearer token GET /metrics requires. Empty means no token is checked, so
+   * the server should then be bound to an address only the scraper reaches.
+   */
+  get metricsToken(): string {
+    return optional("METRICS_TOKEN", "");
+  },
 } as const;

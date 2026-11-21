@@ -32,7 +32,8 @@ local setup.
 
 ## Before you push
 
-CI runs exactly these, so run them locally first:
+CI runs exactly these, in this order (see `.github/workflows/ci.yml`), so run
+them locally first:
 
 ```bash
 npx prisma generate
@@ -40,18 +41,28 @@ npx prisma validate
 npx prisma migrate diff \
   --from-migrations prisma/migrations \
   --to-schema-datamodel prisma/schema.prisma \
-  --shadow-database-url "$SHADOW_DATABASE_URL" \
+  --shadow-database-url "$DATABASE_URL" \
   --exit-code
 npm run lint
 npm run check:env-docs
 npm run typecheck
 npm test
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/novatip_test \
+  npm run test:integration
 npm run build
 ```
 
 The `migrate diff` step replays `prisma/migrations` onto a scratch Postgres
 database (used only as a shadow database, not your dev one) and diffs the
-result against `schema.prisma`. A non-empty diff means either a schema
+result against `schema.prisma`. CI passes its throwaway `DATABASE_URL` as the
+shadow database; Prisma resets whatever database that URL names, so locally
+make sure `DATABASE_URL` points at a scratch database for this step, not the
+one holding your dev data.
+
+The integration tests run against their own database, so CI overrides
+`DATABASE_URL` for that step only. Point it at any empty Postgres database you
+can create locally — the `postgres:postgres@localhost:5432/novatip_test` value
+above is the one CI uses. A non-empty diff means either a schema
 change has no migration, or a migration was hand-edited and no longer
 matches `schema.prisma` — fix it before pushing, since `prisma migrate
 deploy` would otherwise drift from the schema at deploy time. If you changed

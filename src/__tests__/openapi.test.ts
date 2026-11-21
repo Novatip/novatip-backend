@@ -1,4 +1,5 @@
 import Fastify from "fastify";
+import { Prisma } from "@prisma/client";
 import { openApiSpecification } from "../openapi.js";
 import { openApiRoutes } from "../modules/openapi/openapi.routes.js";
 
@@ -31,6 +32,7 @@ describe("OpenAPI route", () => {
         "/creators/me",
         "/creators/me/splits",
         "/creators/me/slug",
+        "/creators/tips/{tipId}/message",
         "/resolve/{slug}",
         "/qr/{slug}",
         "/qr/{slug}/png",
@@ -105,7 +107,7 @@ describe("OpenAPI route", () => {
       "/qr/{slug}",
       "/qr/{slug}/png",
       "/public/{slug}/recent",
-    ];
+    ] as const;
 
     for (const path of slugPaths) {
       const operation = openApiSpecification.paths[path]?.get;
@@ -125,5 +127,52 @@ describe("OpenAPI route", () => {
       });
       expect(operation?.responses).toHaveProperty("400");
     }
+  });
+
+  it("documents every column the full-row creator responses return", () => {
+    // claimSlug, updateProfile, renameSlug and updateCreatorSplits all call
+    // db.creator.update() without a select, so the response carries every
+    // scalar column on the Creator model.
+    const creator = openApiSpecification.components.schemas.Creator;
+    const columns = Object.values(Prisma.CreatorScalarFieldEnum);
+
+    expect(Object.keys(creator.properties)).toEqual(
+      expect.arrayContaining(columns),
+    );
+    expect(creator.required).toEqual(expect.arrayContaining(columns));
+    expect(creator.properties).toMatchObject({
+      emailEnabled: { type: "boolean" },
+      webhookEnabled: { type: "boolean" },
+    });
+  });
+
+  it("documents hiding and unhiding a tip message", () => {
+    const operation =
+      openApiSpecification.paths["/creators/tips/{tipId}/message"]?.patch;
+
+    expect(operation?.security).toEqual([{ bearerAuth: [] }]);
+    expect(operation?.parameters).toEqual([
+      expect.objectContaining({ name: "tipId", in: "path", required: true }),
+    ]);
+    expect(operation?.requestBody).toMatchObject({
+      required: true,
+      content: {
+        "application/json": {
+          schema: { $ref: "#/components/schemas/MessageVisibilityRequest" },
+        },
+      },
+    });
+    expect(
+      openApiSpecification.components.schemas.MessageVisibilityRequest,
+    ).toEqual({
+      type: "object",
+      properties: {
+        hidden: expect.objectContaining({ type: "boolean" }),
+      },
+      required: ["hidden"],
+    });
+    expect(Object.keys(operation?.responses ?? {})).toEqual(
+      expect.arrayContaining(["200", "400", "401", "404"]),
+    );
   });
 });

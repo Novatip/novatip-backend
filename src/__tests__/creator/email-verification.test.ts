@@ -128,13 +128,42 @@ describe("creator email verification", () => {
     const link = sendEmailVerificationEmailMock.mock.calls[0]?.[1];
     if (!link) throw new Error("Verification email was not requested");
     const url = new URL(link);
+    // The test app mounts creatorRoutes without the /api/v1/creators prefix.
+    const path = url.pathname.replace(/^\/api\/v1\/creators/, "");
     const confirmation = await app.inject({
       method: "GET",
-      url: `${url.pathname}${url.search}`,
+      url: `${path}${url.search}`,
     });
 
     expect(confirmation.statusCode).toBe(200);
     expect(confirmation.json()).toEqual({ verified: true });
+    expect(creator.emailVerifiedAt).toBeInstanceOf(Date);
+  });
+
+  it("verifies a valid signed token and records the verification", async () => {
+    const email = "alice@example.com";
+    creator.email = email;
+    const token = app.jwt.sign(
+      {
+        sub: creator.id,
+        email,
+        purpose: "creator-email-verification",
+      },
+      { expiresIn: "24h" },
+    );
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/email/verify?token=${encodeURIComponent(token)}`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ verified: true });
+    expect(updateManyMock).toHaveBeenCalledTimes(1);
+    expect(updateManyMock).toHaveBeenCalledWith({
+      where: { id: creator.id, email, emailVerifiedAt: null },
+      data: { emailVerifiedAt: expect.any(Date) },
+    });
     expect(creator.emailVerifiedAt).toBeInstanceOf(Date);
   });
 
