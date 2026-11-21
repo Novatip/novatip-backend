@@ -2,7 +2,7 @@
  * __tests__/indexer/persist.test.ts
  *
  * Covers:
- * - Unregistered jar skipping with log line (#83)
+ * - Unclaimed jar tip persistence with creatorId: null and info log line (#151)
  * - Named constant INDEXER_CURSOR_ID for single-row cursor table (#84)
  */
 
@@ -60,11 +60,7 @@ jest.unstable_mockModule("../../utils/logger.js", () => ({
 const { persistTip, updateCursor, readCursor, INDEXER_CURSOR_ID } =
   await import("../../indexer/persist.js");
 
-describe("indexer persist (#83 logging unregistered jars & #84 named cursor id)", () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-  });
-
+describe("indexer persist (#151 unclaimed jar persistence & #84 named cursor id)", () => {
   const sampleEvent: TipEvent = {
     txHash: "0xdeadbeef",
     ledger: 100,
@@ -74,6 +70,14 @@ describe("indexer persist (#83 logging unregistered jars & #84 named cursor id)"
     amount: BigInt(5000000),
     message: "great work!",
   };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    upsertTipMock.mockResolvedValue({
+      createdAt: new Date(sampleEvent.timestamp),
+      ledgerAt: new Date(sampleEvent.timestamp),
+    });
+  });
 
   it("exports named constant INDEXER_CURSOR_ID as 1 (#84)", () => {
     expect(INDEXER_CURSOR_ID).toBe(1);
@@ -103,7 +107,7 @@ describe("indexer persist (#83 logging unregistered jars & #84 named cursor id)"
     });
   });
 
-  it("logs at info level and skips silently when jarId is unregistered (#83)", async () => {
+  it("logs at info level and stores tip with creatorId: null when jarId is unclaimed (#151)", async () => {
     findUniqueCreatorMock.mockResolvedValue(null);
 
     await persistTip(sampleEvent, "0xdeadbeef");
@@ -111,11 +115,24 @@ describe("indexer persist (#83 logging unregistered jars & #84 named cursor id)"
     expect(findUniqueCreatorMock).toHaveBeenCalledWith({
       where: { jarId: sampleEvent.jarId },
     });
+    expect(upsertTipMock).toHaveBeenCalledWith({
+      where: { txHash: "0xdeadbeef" },
+      update: {},
+      create: {
+        txHash: "0xdeadbeef",
+        ledger: sampleEvent.ledger,
+        ledgerAt: new Date(sampleEvent.timestamp),
+        fromAddress: sampleEvent.from,
+        amount: sampleEvent.amount.toString(),
+        message: sampleEvent.message,
+        jarId: sampleEvent.jarId,
+        creatorId: null,
+      },
+    });
     expect(loggerInfoMock).toHaveBeenCalledWith(
       { jarId: sampleEvent.jarId },
-      expect.stringContaining("unregistered jar"),
+      expect.stringMatching(/unclaimed jar.*stored without owner/),
     );
-    expect(upsertTipMock).not.toHaveBeenCalled();
   });
 
   it("writes a tip row when jarId belongs to a known creator (#86)", async () => {
@@ -137,12 +154,13 @@ describe("indexer persist (#83 logging unregistered jars & #84 named cursor id)"
         fromAddress: sampleEvent.from,
         amount: sampleEvent.amount.toString(),
         message: sampleEvent.message,
+        jarId: sampleEvent.jarId,
         creatorId: "creator_valid",
       },
     });
   });
 
-  it("skips writing without creating a row when jarId is unknown (#86)", async () => {
+  it("persists a tip row with creatorId: null and jarId set when jarId is unknown (#151)", async () => {
     findUniqueCreatorMock.mockResolvedValue(null);
 
     await persistTip(sampleEvent, "0xunknownjar");
@@ -150,7 +168,20 @@ describe("indexer persist (#83 logging unregistered jars & #84 named cursor id)"
     expect(findUniqueCreatorMock).toHaveBeenCalledWith({
       where: { jarId: sampleEvent.jarId },
     });
-    expect(upsertTipMock).not.toHaveBeenCalled();
+    expect(upsertTipMock).toHaveBeenCalledWith({
+      where: { txHash: "0xunknownjar" },
+      update: {},
+      create: {
+        txHash: "0xunknownjar",
+        ledger: sampleEvent.ledger,
+        ledgerAt: new Date(sampleEvent.timestamp),
+        fromAddress: sampleEvent.from,
+        amount: sampleEvent.amount.toString(),
+        message: sampleEvent.message,
+        jarId: sampleEvent.jarId,
+        creatorId: null,
+      },
+    });
   });
 
   it("is idempotent: processing the same txHash twice produces one row (#86)", async () => {
@@ -163,7 +194,11 @@ describe("indexer persist (#83 logging unregistered jars & #84 named cursor id)"
       const update = args["update"] as Record<string, unknown> | undefined;
       const txHash = where.txHash;
       if (!tipStore.has(txHash)) {
-        tipStore.set(txHash, { id: "tip_row_1", ...create });
+        tipStore.set(txHash, {
+          id: "tip_row_1",
+          createdAt: new Date(sampleEvent.timestamp),
+          ...create,
+        });
       } else if (update && Object.keys(update).length > 0) {
         Object.assign(tipStore.get(txHash)!, update);
       }

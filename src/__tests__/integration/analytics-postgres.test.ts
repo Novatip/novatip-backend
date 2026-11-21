@@ -1,260 +1,264 @@
-import { PrismaClient } from '@prisma/client';
-import { afterAll, beforeAll, describe, expect, it } from '@jest/globals';
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  jest,
+} from "@jest/globals";
 
-const DATABASE_URL = process.env.DATABASE_URL;
+process.env["JWT_SECRET"] ??= "test-secret-at-least-32-chars-long-123456";
+process.env["TIP_SPLITTER_CONTRACT_ID"] ??= `C${"A".repeat(55)}`;
+
+const DATABASE_URL = process.env["DATABASE_URL"];
 
 // Skip these tests when no database is configured
 const describeIf = DATABASE_URL ? describe : describe.skip;
 
-describeIf('Analytics Postgres Integration', () => {
-  let prisma: PrismaClient;
+jest.unstable_mockModule("../../redis.js", () => ({
+  redis: {},
+  cacheGet: async (): Promise<null> => null,
+  cacheSet: async (): Promise<void> => undefined,
+  cacheInvalidate: async (): Promise<void> => undefined,
+}));
+
+describeIf("Analytics Postgres Integration", () => {
+  let db: (typeof import("../../db.js"))["db"];
+  let disconnectDb: (typeof import("../../db.js"))["disconnectDb"];
+  let getTotals: (typeof import("../../modules/analytics/analytics.service.js"))["getTotals"];
+  let getTimeSeries: (typeof import("../../modules/analytics/analytics.service.js"))["getTimeSeries"];
+  let getTopSupporters: (typeof import("../../modules/analytics/analytics.service.js"))["getTopSupporters"];
+  let getCollaboratorEarnings: (typeof import("../../modules/analytics/analytics.service.js"))["getCollaboratorEarnings"];
+
   let creatorId: string;
   let creatorWallet: string;
 
   beforeAll(async () => {
-    prisma = new PrismaClient();
-    await prisma.$connect();
+    ({ db, disconnectDb } = await import("../../db.js"));
+    ({
+      getTotals,
+      getTimeSeries,
+      getTopSupporters,
+      getCollaboratorEarnings,
+    } = await import("../../modules/analytics/analytics.service.js"));
 
-    // Create a test creator
-    creatorWallet = 'GTEST' + 'A'.repeat(51);
-    const creator = await prisma.creator.create({
+    await db.$connect();
+
+    creatorWallet = "GTEST" + "A".repeat(51);
+    const suffix = Date.now();
+    const creator = await db.creator.create({
       data: {
         walletAddress: creatorWallet,
-        slug: 'test-analytics-' + Date.now(),
-        jarId: '@test-analytics-' + Date.now(),
+        slug: `test-analytics-${suffix}`,
+        jarId: `@test-analytics-${suffix}`,
       },
     });
     creatorId = creator.id;
   });
 
-  afterAll(async () => {
-    // Clean up test data
-    if (prisma && creatorId) {
-      await prisma.tip.deleteMany({ where: { creatorId } });
-      await prisma.creator.delete({ where: { id: creatorId } });
-    }
-    await prisma.$disconnect();
+  beforeEach(async () => {
+    await db.tip.deleteMany({ where: { creatorId } });
+    await db.creator.update({
+      where: { id: creatorId },
+      data: { splits: [] },
+    });
   });
 
-  describe('getTotals', () => {
-    it('should calculate totals correctly', async () => {
-      // Seed tips
-      await prisma.tip.createMany({
+  afterAll(async () => {
+    if (db && creatorId) {
+      await db.tip.deleteMany({ where: { creatorId } });
+      await db.creator.delete({ where: { id: creatorId } });
+    }
+    if (disconnectDb) {
+      await disconnectDb();
+    }
+  });
+
+  describe("getTotals", () => {
+    it("calculates totals and unique supporters via getTotals()", async () => {
+      const now = Date.now();
+      await db.tip.createMany({
         data: [
           {
             creatorId,
-            txHash: 'hash1' + Date.now(),
+            txHash: `hash1-${now}`,
             ledger: 1000,
-            fromAddress: 'GSENDER' + 'A'.repeat(49),
-            amount: '1000000', // 1 USDC
+            fromAddress: "GSENDER" + "A".repeat(49),
+            amount: "1000000", // 1 USDC
             ledgerAt: new Date(),
           },
           {
             creatorId,
-            txHash: 'hash2' + Date.now(),
+            txHash: `hash2-${now}`,
             ledger: 1001,
-            fromAddress: 'GSENDER' + 'B'.repeat(49),
-            amount: '2500000', // 2.5 USDC
+            fromAddress: "GSENDER" + "B".repeat(49),
+            amount: "2500000", // 2.5 USDC
             ledgerAt: new Date(),
           },
           {
             creatorId,
-            txHash: 'hash3' + Date.now(),
+            txHash: `hash3-${now}`,
             ledger: 1002,
-            fromAddress: 'GSENDER' + 'A'.repeat(49), // Same supporter
-            amount: '500000', // 0.5 USDC
+            fromAddress: "GSENDER" + "A".repeat(49), // Same supporter
+            amount: "500000", // 0.5 USDC
             ledgerAt: new Date(),
           },
         ],
       });
 
-      // Execute the query
-      const result = await prisma.$queryRaw<
-        Array<{ tipCount: bigint; totalAmount: string; supporters: bigint }>
-      >`
-        SELECT
-          COUNT(*)::bigint AS "tipCount",
-          SUM(amount::numeric)::text AS "totalAmount",
-          COUNT(DISTINCT "fromAddress")::bigint AS supporters
-        FROM "Tip"
-        WHERE "creatorId" = ${creatorId}
-      `;
+      const totals = await getTotals(creatorId);
 
-      expect(result).toHaveLength(1);
-      expect(result[0].tipCount).toBe(3n);
-      expect(result[0].totalAmount).toBe('4000000'); // 4 USDC
-      expect(result[0].supporters).toBe(2n); // 2 unique senders
+      expect(totals).toEqual({
+        totalTips: 3,
+        totalAmountRaw: "4000000",
+        uniqueSupporters: 2,
+      });
     });
 
-    it('should handle large i128 amounts', async () => {
+    it("handles large i128 amounts via getTotals()", async () => {
       // Max i128 is 170141183460469231731687303715884105727
-      const largeAmount = '170141183460469231731687303715884105727';
+      const largeAmount = "170141183460469231731687303715884105727";
 
-      await prisma.tip.create({
+      await db.tip.create({
         data: {
           creatorId,
-          txHash: 'hash-large-' + Date.now(),
+          txHash: `hash-large-${Date.now()}`,
           ledger: 2000,
-          fromAddress: 'GBIG' + 'A'.repeat(52),
+          fromAddress: "GBIG" + "A".repeat(52),
           amount: largeAmount,
           ledgerAt: new Date(),
         },
       });
 
-      const result = await prisma.$queryRaw<
-        Array<{ totalAmount: string }>
-      >`
-        SELECT SUM(amount::numeric)::text AS "totalAmount"
-        FROM "Tip"
-        WHERE "creatorId" = ${creatorId}
-          AND "txHash" = ${'hash-large-' + Date.now()}
-      `;
+      const totals = await getTotals(creatorId);
 
-      expect(result[0].totalAmount).toBe(largeAmount);
+      expect(totals).toEqual({
+        totalTips: 1,
+        totalAmountRaw: largeAmount,
+        uniqueSupporters: 1,
+      });
     });
   });
 
-  describe('getTimeSeries', () => {
-    it('should aggregate tips by day', async () => {
+  describe("getTimeSeries", () => {
+    it("aggregates tips by UTC day and fills zero-tip days with { tipCount: 0, amountRaw: '0' }", async () => {
       const now = new Date();
-      const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-      const twoDaysAgo = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000);
+      const todayUtc = new Date(
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 12, 0, 0),
+      );
+      const yesterdayUtc = new Date(todayUtc.getTime() - 24 * 60 * 60 * 1000);
+      const twoDaysAgoUtc = new Date(
+        todayUtc.getTime() - 2 * 24 * 60 * 60 * 1000,
+      );
 
-      await prisma.tip.createMany({
+      const suffix = Date.now();
+      await db.tip.createMany({
         data: [
           {
             creatorId,
-            txHash: 'ts1-' + Date.now(),
+            txHash: `ts1-${suffix}`,
             ledger: 3000,
-            fromAddress: 'GADDR' + 'A'.repeat(51),
-            amount: '1000000',
-            ledgerAt: twoDaysAgo,
+            fromAddress: "GADDR" + "A".repeat(51),
+            amount: "1000000",
+            ledgerAt: twoDaysAgoUtc,
           },
+          // Intentionally no tips on yesterdayUtc to exercise gap-filling
           {
             creatorId,
-            txHash: 'ts2-' + Date.now(),
-            ledger: 3001,
-            fromAddress: 'GADDR' + 'B'.repeat(51),
-            amount: '2000000',
-            ledgerAt: yesterday,
-          },
-          {
-            creatorId,
-            txHash: 'ts3-' + Date.now(),
+            txHash: `ts3-${suffix}`,
             ledger: 3002,
-            fromAddress: 'GADDR' + 'C'.repeat(51),
-            amount: '3000000',
-            ledgerAt: now,
+            fromAddress: "GADDR" + "C".repeat(51),
+            amount: "3000000",
+            ledgerAt: todayUtc,
           },
         ],
       });
 
-      const days = 3;
-      const result = await prisma.$queryRaw<
-        Array<{ day: Date; tipCount: bigint; amountRaw: string }>
-      >`
-        WITH RECURSIVE days AS (
-          SELECT (CURRENT_DATE - ${days - 1})::date AS day
-          UNION ALL
-          SELECT (day + INTERVAL '1 day')::date
-          FROM days
-          WHERE day < CURRENT_DATE
-        )
-        SELECT
-          days.day,
-          COALESCE(COUNT(t.id), 0)::bigint AS "tipCount",
-          COALESCE(SUM(t.amount::numeric), 0)::text AS "amountRaw"
-        FROM days
-        LEFT JOIN "Tip" t
-          ON DATE_TRUNC('day', t."ledgerAt" AT TIME ZONE 'UTC') = days.day
-          AND t."creatorId" = ${creatorId}
-        GROUP BY days.day
-        ORDER BY days.day ASC
-      `;
+      const series = await getTimeSeries(creatorId, 3);
 
-      expect(result).toHaveLength(days);
-      expect(result.every((r) => r.day instanceof Date)).toBe(true);
-      expect(result.every((r) => typeof r.amountRaw === 'string')).toBe(true);
+      expect(series).toEqual([
+        {
+          date: twoDaysAgoUtc.toISOString().slice(0, 10),
+          tipCount: 1,
+          amountRaw: "1000000",
+        },
+        {
+          date: yesterdayUtc.toISOString().slice(0, 10),
+          tipCount: 0,
+          amountRaw: "0",
+        },
+        {
+          date: todayUtc.toISOString().slice(0, 10),
+          tipCount: 1,
+          amountRaw: "3000000",
+        },
+      ]);
     });
   });
 
-  describe('getTopSupporters', () => {
-    it('should rank supporters by total amount', async () => {
-      const supporter1 = 'GTOP1' + 'A'.repeat(51);
-      const supporter2 = 'GTOP2' + 'B'.repeat(51);
-      const supporter3 = 'GTOP3' + 'C'.repeat(51);
+  describe("getTopSupporters", () => {
+    it("ranks supporters by total amount via getTopSupporters()", async () => {
+      const supporter1 = "GTOP1" + "A".repeat(51);
+      const supporter2 = "GTOP2" + "B".repeat(51);
+      const supporter3 = "GTOP3" + "C".repeat(51);
+      const suffix = Date.now();
 
-      await prisma.tip.createMany({
+      await db.tip.createMany({
         data: [
           {
             creatorId,
-            txHash: 'top1-' + Date.now() + '-1',
+            txHash: `top1-${suffix}-1`,
             ledger: 4000,
             fromAddress: supporter1,
-            amount: '5000000',
+            amount: "5000000",
             ledgerAt: new Date(),
           },
           {
             creatorId,
-            txHash: 'top1-' + Date.now() + '-2',
+            txHash: `top1-${suffix}-2`,
             ledger: 4001,
             fromAddress: supporter1,
-            amount: '3000000',
+            amount: "3000000",
             ledgerAt: new Date(),
           },
           {
             creatorId,
-            txHash: 'top2-' + Date.now(),
+            txHash: `top2-${suffix}`,
             ledger: 4002,
             fromAddress: supporter2,
-            amount: '6000000',
+            amount: "6000000",
             ledgerAt: new Date(),
           },
           {
             creatorId,
-            txHash: 'top3-' + Date.now(),
+            txHash: `top3-${suffix}`,
             ledger: 4003,
             fromAddress: supporter3,
-            amount: '1000000',
+            amount: "1000000",
             ledgerAt: new Date(),
           },
         ],
       });
 
-      const limit = 3;
-      const result = await prisma.$queryRaw<
-        Array<{
-          fromAddress: string;
-          tipCount: bigint;
-          totalAmount: string;
-        }>
-      >`
-        SELECT
-          "fromAddress",
-          COUNT(*)::bigint AS "tipCount",
-          SUM(amount::numeric)::text AS "totalAmount"
-        FROM "Tip"
-        WHERE "creatorId" = ${creatorId}
-        GROUP BY "fromAddress"
-        ORDER BY SUM(amount::numeric) DESC
-        LIMIT ${limit}
-      `;
+      const supporters = await getTopSupporters(creatorId, 3);
 
-      expect(result).toHaveLength(3);
-      expect(result[0].fromAddress).toBe(supporter1);
-      expect(result[0].totalAmount).toBe('8000000');
-      expect(result[1].fromAddress).toBe(supporter2);
-      expect(result[1].totalAmount).toBe('6000000');
+      expect(supporters).toEqual([
+        { fromAddress: supporter1, tipCount: 2, totalAmountRaw: "8000000" },
+        { fromAddress: supporter2, tipCount: 1, totalAmountRaw: "6000000" },
+        { fromAddress: supporter3, tipCount: 1, totalAmountRaw: "1000000" },
+      ]);
     });
   });
 
-  describe('getCollaborators', () => {
-    it('should calculate per-recipient earnings', async () => {
-      const recipient1 = 'GCOLLAB1' + 'A'.repeat(48);
-      const recipient2 = 'GCOLLAB2' + 'B'.repeat(48);
+  describe("getCollaboratorEarnings", () => {
+    it("calculates per-recipient earnings via getCollaboratorEarnings()", async () => {
+      const recipient1 = "GCOLLAB1" + "A".repeat(48);
+      const recipient2 = "GCOLLAB2" + "B".repeat(48);
+      const suffix = Date.now();
 
       // Set up splits: 50% to recipient1, 30% to recipient2
-      await prisma.creator.update({
+      await db.creator.update({
         where: { id: creatorId },
         data: {
           splits: [
@@ -264,65 +268,48 @@ describeIf('Analytics Postgres Integration', () => {
         },
       });
 
-      await prisma.tip.createMany({
+      await db.tip.createMany({
         data: [
           {
             creatorId,
-            txHash: 'collab1-' + Date.now(),
+            txHash: `collab1-${suffix}`,
             ledger: 5000,
-            fromAddress: 'GSEND' + 'A'.repeat(51),
-            amount: '10000000', // 10 USDC
+            fromAddress: "GSEND" + "A".repeat(51),
+            amount: "10000000", // 10 USDC
             ledgerAt: new Date(),
           },
           {
             creatorId,
-            txHash: 'collab2-' + Date.now(),
+            txHash: `collab2-${suffix}`,
             ledger: 5001,
-            fromAddress: 'GSEND' + 'B'.repeat(51),
-            amount: '5000000', // 5 USDC
+            fromAddress: "GSEND" + "B".repeat(51),
+            amount: "5000000", // 5 USDC
             ledgerAt: new Date(),
           },
         ],
       });
 
-      // Query that mimics the collaborator breakdown logic
-      const result = await prisma.$queryRaw<
-        Array<{ to: string; totalEarned: string }>
-      >`
-        WITH split AS (
-          SELECT
-            jsonb_array_elements(c.splits) AS recipient
-          FROM "Creator" c
-          WHERE c.id = ${creatorId}
-        ),
-        expanded AS (
-          SELECT
-            (recipient->>'to')::text AS "to",
-            (recipient->>'bps')::integer AS bps
-          FROM split
-        ),
-        earnings AS (
-          SELECT
-            e."to",
-            e.bps,
-            SUM(FLOOR(t.amount::numeric * e.bps / 10000))::text AS "totalEarned"
-          FROM expanded e
-          CROSS JOIN "Tip" t
-          WHERE t."creatorId" = ${creatorId}
-          GROUP BY e."to", e.bps
-        )
-        SELECT "to", "totalEarned" FROM earnings
-        ORDER BY "totalEarned" DESC
-      `;
+      const breakdown = await getCollaboratorEarnings(creatorId);
 
-      expect(result).toHaveLength(2);
-      const r1 = result.find((r) => r.to === recipient1);
-      const r2 = result.find((r) => r.to === recipient2);
-
-      // 15 USDC total * 50% = 7.5 USDC = 7500000 stroops
-      expect(r1?.totalEarned).toBe('7500000');
-      // 15 USDC total * 30% = 4.5 USDC = 4500000 stroops
-      expect(r2?.totalEarned).toBe('4500000');
+      expect(breakdown.tipCount).toBe(2);
+      expect(breakdown.totalAmountRaw).toBe("15000000");
+      expect(breakdown.unallocatedRaw).toBe("3000000");
+      expect(breakdown.collaborators).toEqual([
+        {
+          to: recipient1,
+          bps: 5000,
+          sharePercent: 50,
+          totalEarnedRaw: "7500000",
+        },
+        {
+          to: recipient2,
+          bps: 3000,
+          sharePercent: 30,
+          totalEarnedRaw: "4500000",
+        },
+      ]);
+      expect(breakdown.basis.mode).toBe("current-splits");
+      expect(breakdown.basis.impliedOwnerSplit).toBe(false);
     });
   });
 });

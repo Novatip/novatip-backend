@@ -55,6 +55,7 @@ function tipPayload(event: TipEvent) {
     message: event.message,
     ledger: event.ledger,
     timestamp: event.timestamp,
+    txHash: event.txHash,
   };
 }
 

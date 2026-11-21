@@ -42,7 +42,7 @@ export const healthRoutes: FastifyPluginAsync = async (app) => {
   // ── GET /live ──────────────────────────────────────────────────────────────
   // Cheap, dependency-free. Answers "is the process running?" — a `down`
   // response here should trigger a restart, not just a traffic drain.
-  app.get("/live", async () => ({
+  app.get("/live", { config: { rateLimit: false } }, async () => ({
     status: "ok",
     ts: new Date().toISOString(),
   }));
@@ -50,7 +50,7 @@ export const healthRoutes: FastifyPluginAsync = async (app) => {
   // ── GET /ready ─────────────────────────────────────────────────────────────
   // Answers "can this instance serve traffic?" Returns 503 while any
   // dependency is unreachable so load balancers stop routing to it.
-  app.get("/ready", async (_request, reply) => {
+  app.get("/ready", { config: { rateLimit: false } }, async (_request, reply) => {
     const report = await getReadiness();
     const statusCode = report.status === "ok" ? 200 : 503;
     return reply
@@ -61,7 +61,7 @@ export const healthRoutes: FastifyPluginAsync = async (app) => {
   // ── GET /indexer ──────────────────────────────────────────────────────────
   // Separate from readiness: indexer progress remains observable when the
   // chain RPC is unavailable.
-  app.get("/indexer", async () => ({
+  app.get("/indexer", { config: { rateLimit: false } }, async () => ({
     ...(await getIndexerStatus()),
     ts: new Date().toISOString(),
   }));
@@ -69,7 +69,7 @@ export const healthRoutes: FastifyPluginAsync = async (app) => {
   // ── GET /version ─────────────────────────────────────────────────────────────
   // Public build metadata for deploy verification: clients can confirm the
   // package version and git commit being served without exposing any secrets.
-  app.get("/version", async () => ({
+  app.get("/version", { config: { rateLimit: false } }, async () => ({
     version: getPackageVersion(),
     commit: getBuildCommit(),
     network: config.stellar.network,
