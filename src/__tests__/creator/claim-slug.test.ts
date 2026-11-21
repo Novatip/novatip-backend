@@ -75,7 +75,9 @@ jest.unstable_mockModule("../../redis.js", () => ({
   disconnectRedis: async (): Promise<void> => undefined,
 }));
 
-const { claimSlug } = await import("../../modules/creator/creator.service.js");
+const { claimSlug, updateProfile, updateCreatorSplits } = await import(
+  "../../modules/creator/creator.service.js"
+);
 
 const CREATOR = "creator_alice";
 const OTHER_CREATOR = "creator_bob";
@@ -99,6 +101,13 @@ function uniqueConstraintError(
   return new Prisma.PrismaClientKnownRequestError(
     `Unique constraint failed on the fields: (${target.join(", ")})`,
     { code: "P2002", clientVersion: "5.15.0", meta: { target } },
+  );
+}
+
+function recordNotFoundError(): Prisma.PrismaClientKnownRequestError {
+  return new Prisma.PrismaClientKnownRequestError(
+    "Record to update not found.",
+    { code: "P2025", clientVersion: "5.15.0" },
   );
 }
 
@@ -273,6 +282,34 @@ describe("claiming a free slug", () => {
     ).resolves.toMatchObject({ slug: "newslug" });
 
     expect(cacheInvalidateMock).toHaveBeenCalledWith("creator:newslug");
+  });
+});
+
+describe("updates for a deleted creator", () => {
+  async function expectNotFound(update: () => Promise<unknown>) {
+    findUniqueMock.mockResolvedValue(null);
+    updateMock.mockRejectedValue(recordNotFoundError());
+
+    await expect(update()).rejects.toMatchObject({
+      statusCode: 404,
+      message: "Creator not found.",
+    });
+  }
+
+  it("claimSlug returns a sanitized 404 when the update finds no record", async () => {
+    await expectNotFound(() =>
+      claimSlug({ creatorId: CREATOR, slug: "newslug" }),
+    );
+  });
+
+  it("updateProfile returns a sanitized 404 when the update finds no record", async () => {
+    await expectNotFound(() =>
+      updateProfile({ creatorId: CREATOR, displayName: "Alice" }),
+    );
+  });
+
+  it("updateCreatorSplits returns a sanitized 404 when the update finds no record", async () => {
+    await expectNotFound(() => updateCreatorSplits(CREATOR, []));
   });
 });
 

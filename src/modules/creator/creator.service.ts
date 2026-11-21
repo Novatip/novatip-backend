@@ -288,7 +288,7 @@ export async function claimSlug(input: ClaimSlugInput) {
       },
     });
   } catch (err) {
-    throw toClaimConflict(err);
+    throw toClaimConflict(toCreatorNotFound(err));
   }
 
   await db.tip.updateMany({
@@ -470,6 +470,16 @@ function toClaimConflict(err: unknown): unknown {
   );
 }
 
+function toCreatorNotFound(err: unknown): unknown {
+  if (
+    err instanceof Prisma.PrismaClientKnownRequestError &&
+    err.code === "P2025"
+  ) {
+    return Object.assign(new Error("Creator not found."), { statusCode: 404 });
+  }
+  return err;
+}
+
 // ── Profile ───────────────────────────────────────────────────────────────────
 
 /**
@@ -523,21 +533,26 @@ export async function updateProfile(input: UpdateProfileInput) {
     throw Object.assign(new Error("Creator not found."), { statusCode: 404 });
   }
 
-  const creator = await db.creator.update({
-    where: { id: input.creatorId },
-    // See the note in claimSlug: absent key, not an explicit undefined.
-    data: {
-      ...(input.displayName !== undefined && {
-        displayName: input.displayName,
-      }),
-      ...(input.bio !== undefined && { bio: input.bio }),
-      ...(input.avatarUrl !== undefined && { avatarUrl: input.avatarUrl }),
-      ...(input.email !== undefined && {
-        email: input.email,
-        ...(input.email !== current?.email && { emailVerifiedAt: null }),
-      }),
-    },
-  });
+  let creator;
+  try {
+    creator = await db.creator.update({
+      where: { id: input.creatorId },
+      // See the note in claimSlug: absent key, not an explicit undefined.
+      data: {
+        ...(input.displayName !== undefined && {
+          displayName: input.displayName,
+        }),
+        ...(input.bio !== undefined && { bio: input.bio }),
+        ...(input.avatarUrl !== undefined && { avatarUrl: input.avatarUrl }),
+        ...(input.email !== undefined && {
+          email: input.email,
+          ...(input.email !== current?.email && { emailVerifiedAt: null }),
+        }),
+      },
+    });
+  } catch (err) {
+    throw toCreatorNotFound(err);
+  }
 
   await cacheInvalidate(`creator:${creator.slug}`);
   return creator;
@@ -551,10 +566,15 @@ export async function updateCreatorSplits(
   creatorId: string,
   splits: Array<{ to: string; bps: number }>,
 ) {
-  const creator = await db.creator.update({
-    where: { id: creatorId },
-    data: { splits },
-  });
+  let creator;
+  try {
+    creator = await db.creator.update({
+      where: { id: creatorId },
+      data: { splits },
+    });
+  } catch (err) {
+    throw toCreatorNotFound(err);
+  }
 
   await cacheInvalidate(`creator:${creator.slug}`);
   return creator;
