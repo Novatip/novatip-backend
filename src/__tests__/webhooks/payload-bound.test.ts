@@ -129,20 +129,36 @@ describe("stored webhook payload bound", () => {
     expect(stored.amountRaw).toBe("");
   });
 
-  it("stores a test ping as is even when it exceeds the configured limit", async () => {
+  it("falls back to a minimal record when fixed fields still exceed the limit", async () => {
+    seedDispatchTarget();
+    const oversizedTip = { ...tip, message: "x".repeat(4_000) };
+
+    await withMaxPayloadSize(10, async () => {
+      await dispatchWebhooks(oversizedTip);
+    });
+
+    const stored = fake.deliveries[0]?.payload;
+    expect(stored).toEqual({});
+    expect(
+      Buffer.byteLength(JSON.stringify(stored), "utf8"),
+    ).toBeLessThanOrEqual(10);
+  });
+
+  it("bounds a test ping to a minimal record under a small configured limit", async () => {
     const webhookId = fake.seedWebhook({
       creatorId: CREATOR_ID,
       url: WEBHOOK_URL,
     }).id;
 
-    await withMaxPayloadSize(1, async () => {
+    await withMaxPayloadSize(10, async () => {
       await sendTestPing(CREATOR_ID, webhookId);
     });
 
-    expect(fake.deliveries[0]?.payload).toEqual(sentPayload());
-    expect(fake.deliveries[0]?.payload).toMatchObject({
-      event: "webhook.test",
-      test: true,
-    });
+    const stored = fake.deliveries[0]?.payload;
+    expect(stored).toEqual({});
+    expect(
+      Buffer.byteLength(JSON.stringify(stored), "utf8"),
+    ).toBeLessThanOrEqual(10);
+    expect(sentPayload()).toMatchObject({ event: "webhook.test", test: true });
   });
 });

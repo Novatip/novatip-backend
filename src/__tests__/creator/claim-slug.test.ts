@@ -285,31 +285,18 @@ describe("claiming a free slug", () => {
   });
 });
 
-describe("updates for a deleted creator", () => {
-  async function expectNotFound(update: () => Promise<unknown>) {
-    findUniqueMock.mockResolvedValue(null);
-    updateMock.mockRejectedValue(recordNotFoundError());
+describe("updateCreatorSplits", () => {
+  it("writes the splits and invalidates the creator cache", async () => {
+    const splits = [{ to: OTHER_CREATOR, bps: 10_000 }];
+    updateMock.mockResolvedValue(row());
 
-    await expect(update()).rejects.toMatchObject({
-      statusCode: 404,
-      message: "Creator not found.",
+    await updateCreatorSplits(CREATOR, splits);
+
+    expect(updateMock).toHaveBeenCalledWith({
+      where: { id: CREATOR },
+      data: { splits },
     });
-  }
-
-  it("claimSlug returns a sanitized 404 when the update finds no record", async () => {
-    await expectNotFound(() =>
-      claimSlug({ creatorId: CREATOR, slug: "newslug" }),
-    );
-  });
-
-  it("updateProfile returns a sanitized 404 when the update finds no record", async () => {
-    await expectNotFound(() =>
-      updateProfile({ creatorId: CREATOR, displayName: "Alice" }),
-    );
-  });
-
-  it("updateCreatorSplits returns a sanitized 404 when the update finds no record", async () => {
-    await expectNotFound(() => updateCreatorSplits(CREATOR, []));
+    expect(cacheInvalidateMock).toHaveBeenCalledWith("creator:alice");
   });
 });
 

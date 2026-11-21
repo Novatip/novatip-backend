@@ -163,7 +163,7 @@ MAX_WEBHOOKS_PER_CREATOR - Most webhooks one creator may register (default: 5, 0
 WEBHOOK_DELIVERY_CONCURRENCY - Maximum webhook HTTP requests in flight across the process (default: 10)
 WEBHOOK_TIMEOUT_MS - Timeout for a webhook endpoint to answer before the delivery is recorded as failed, in milliseconds (default: 5000)
 WEBHOOK_MAX_BODY_SIZE - Max response body bytes captured in delivery logs (default: 1024)
-WEBHOOK_MAX_PAYLOAD_SIZE - Max stored delivery payload size in bytes (default: 2048)
+WEBHOOK_MAX_PAYLOAD_SIZE - Max stored delivery payload size in bytes (default: 2048, minimum: 2)
 WEBHOOK_DELIVERY_RETENTION_DAYS - Prune successful deliveries older than this (default: 30, 0 disables)
 WEBHOOK_DELIVERY_FAILURE_RETENTION_DAYS - Prune failed deliveries older than this (default: 90, 0 disables)
 NOTIFICATION_RETENTION_DAYS - Days notification rows are kept (default: 90, 0 keeps them forever)

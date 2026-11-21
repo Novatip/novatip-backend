@@ -38,6 +38,10 @@ const renameSlugMock = jest.fn(async (input: { slug: string }) => ({
   slug: input.slug,
 }));
 const deleteCreatorMock = jest.fn(async () => undefined);
+const updateCreatorSplitsMock = jest.fn(async () => ({
+  id: CREATOR,
+  slug: "alice",
+}));
 const setTipMessageHiddenMock = jest.fn(
   async (
     _creatorId: string,
@@ -54,7 +58,7 @@ jest.unstable_mockModule("../../modules/creator/creator.service.js", () => ({
   claimSlug: claimSlugMock,
   renameSlug: renameSlugMock,
   updateProfile: jest.fn(),
-  updateCreatorSplits: jest.fn(),
+  updateCreatorSplits: updateCreatorSplitsMock,
   isSlugAvailable: jest.fn(),
   deleteCreator: deleteCreatorMock,
 }));
@@ -182,6 +186,21 @@ describe("PATCH /me/slug", () => {
       creatorId: CREATOR,
       slug: "alice_new",
     });
+  });
+});
+
+describe("PATCH /me/splits", () => {
+  it("returns 400 when the splits array is empty", async () => {
+    const res = await app.inject({
+      method: "PATCH",
+      url: "/me/splits",
+      headers: authHeaders(),
+      payload: { splits: [] },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.fieldErrors.splits).toBeDefined();
+    expect(updateCreatorSplitsMock).not.toHaveBeenCalled();
   });
 });
 

@@ -264,12 +264,14 @@ export const config = {
      * Maximum stored delivery payload size in bytes.
      * Defaults to 2,048 bytes (2 KB), which easily accommodates standard tip payloads
      * while trimming oversized variable fields (e.g. long messages) to prevent
-     * historical delivery logs from ballooning storage.
+     * historical delivery logs from ballooning storage. The minimum is 2 bytes
+     * so even the smallest valid JSON object (`{}`) fits within the bound.
      */
     maxPayloadSize: optionalIntDeprecatedFallback(
       "WEBHOOK_MAX_PAYLOAD_SIZE",
       "MAX_PAYLOAD_SIZE",
       2_048,
+      2,
     ),
 
     /**
