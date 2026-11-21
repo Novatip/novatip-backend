@@ -10,6 +10,7 @@
 import { jest } from "@jest/globals";
 import Fastify, { type FastifyInstance } from "fastify";
 import jwtPlugin from "@fastify/jwt";
+import { createRateLimitRedisMock } from "../helpers/rate-limit-redis.helper.js";
 
 process.env["DATABASE_URL"] ??= "postgresql://user:pass@localhost:5432/test";
 process.env["JWT_SECRET"] ??= "test-secret-at-least-32-chars-long-123456";
@@ -86,6 +87,8 @@ const transactionMock = jest.fn(
     }),
 );
 const revokedCreatorIds = new Set<string>();
+// authRoutes registers the shared Redis-backed rate limiter.
+const rateLimitRedis = createRateLimitRedisMock();
 
 jest.unstable_mockModule("../../db.js", () => ({
   db: {
@@ -107,6 +110,7 @@ jest.unstable_mockModule("../../db.js", () => ({
 }));
 
 jest.unstable_mockModule("../../redis.js", () => ({
+  redis: rateLimitRedis.redis,
   consumeAuthNonce: jest.fn(async () => null),
   setAuthNonce: jest.fn(async () => undefined),
   cacheInvalidate: jest.fn(async () => undefined),
@@ -132,7 +136,7 @@ describe("GET /auth/me fresh slug and authentication", () => {
   let app: FastifyInstance;
   const CREATOR_ID = "creator_123";
   const WALLET = "GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ";
-  const INITIAL_SLUG = "user_initial42";
+  const INITIAL_SLUG = "user_1a2b3c4d";
 
   beforeEach(async () => {
     revokedCreatorIds.clear();
@@ -170,7 +174,6 @@ describe("GET /auth/me fresh slug and authentication", () => {
       sub: CREATOR_ID,
       wallet: WALLET,
       slug: INITIAL_SLUG,
-      emailVerifiedAt: null,
     });
 
     // Initial check: should return INITIAL_SLUG
@@ -185,6 +188,9 @@ describe("GET /auth/me fresh slug and authentication", () => {
         sub: CREATOR_ID,
         wallet: WALLET,
         slug: INITIAL_SLUG,
+        emailVerifiedAt: null,
+        // GET /me echoes the decoded token, which includes its issued-at.
+        iat: expect.any(Number),
       },
     });
 
@@ -205,6 +211,8 @@ describe("GET /auth/me fresh slug and authentication", () => {
         wallet: WALLET,
         slug: claimedSlug,
         emailVerifiedAt: null,
+        // GET /me echoes the decoded token, which includes its issued-at.
+        iat: expect.any(Number),
       },
     });
   });
