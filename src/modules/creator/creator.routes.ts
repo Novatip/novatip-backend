@@ -23,6 +23,7 @@ import {
   deleteCreator,
   type PublicCreator,
 } from "./creator.service.js";
+import { setTipMessageHidden } from "./messages.service.js";
 import { config } from "../../config.js";
 import { db } from "../../db.js";
 import { sendEmailVerificationEmail } from "../notifications/email.service.js";
@@ -284,7 +285,13 @@ export const creatorRoutes: FastifyPluginAsync = async (app) => {
       const tip = await setTipMessageHidden(user.sub, tipId, body.data.hidden);
 
       if (!tip) {
-        return reply.status(404).send({ error: "Tip not found" });
+        // Missing and not-yours are the same answer — see setTipMessageHidden.
+        return reply.status(404).send({
+          error: {
+            code: "TIP_NOT_FOUND",
+            message: "Tip not found",
+          },
+        });
       }
 
       return reply.send({ tip });
