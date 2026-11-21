@@ -32,8 +32,13 @@ import {
   tipHistoryCsvStream,
 } from "./analytics.service.js";
 
-const DaysQuery = z.coerce.number().int().min(1).max(365).default(30);
-const LimitQuery = z.coerce.number().int().min(1).max(100).default(10);
+/**
+ * Query bounds for the dashboard routes. Exported so they can be unit tested
+ * without standing up the server, the same as webhooks.routes.ts's
+ * DeliveryQuery/WebhookQuery — they are the endpoints' contract.
+ */
+export const DaysQuery = z.coerce.number().int().min(1).max(365).default(30);
+export const LimitQuery = z.coerce.number().int().min(1).max(100).default(10);
 
 /**
  * The recent feed takes a cursor as well as a limit, so it validates the whole
@@ -43,7 +48,7 @@ const LimitQuery = z.coerce.number().int().min(1).max(100).default(10);
  * composes — so it is checked only for being a non-empty string here; decoding
  * is what rejects a value this server did not issue.
  */
-const RecentQuery = z.object({
+export const RecentQuery = z.object({
   limit: z.coerce
     .number()
     .int()

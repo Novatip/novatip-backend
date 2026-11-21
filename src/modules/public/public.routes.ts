@@ -27,7 +27,11 @@ import {
 } from "../analytics/analytics.service.js";
 import { validateSlugParam } from "../../utils/validation.js";
 
-const RecentQuery = z.object({
+/**
+ * Public feed paging. Exported so the bounds can be unit tested without
+ * standing up the server, like the analytics and webhook query schemas.
+ */
+export const RecentQuery = z.object({
   limit: z.coerce
     .number()
     .int()
