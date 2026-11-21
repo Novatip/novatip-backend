@@ -120,8 +120,6 @@ export async function buildServer(
         await import("./modules/public/public.routes.js");
       const { openApiRoutes } =
         await import("./modules/openapi/openapi.routes.js");
-      const { metricsRoutes } =
-        await import("./modules/metrics/metrics.routes.js");
 
       await app.register(healthRoutes, { prefix: "/health" });
       await app.register(authRoutes, { prefix: "/auth" });
@@ -136,6 +134,11 @@ export async function buildServer(
     },
     { prefix: "/api/v1" },
   );
+
+  // Prometheus scrapes /metrics at the root, outside the versioned API.
+  // metricsRoutes registers nothing unless METRICS_ENABLED is set.
+  const { metricsRoutes } = await import("./modules/metrics/metrics.routes.js");
+  await server.register(metricsRoutes);
 
   server.setNotFoundHandler((request, reply) => {
     reply.status(404).send({
