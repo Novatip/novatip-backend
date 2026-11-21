@@ -61,17 +61,26 @@ deploy a fresh testnet contract from
 
 ## Data Model
 
-The PostgreSQL schema is defined in `prisma/schema.prisma`. Its six models
-connect creator accounts to indexed tips and their notification and webhook
-delivery paths:
+The PostgreSQL schema is defined in `prisma/schema.prisma`. Its seven models
+connect creator accounts to indexed tips, their notification and webhook
+delivery paths, and the slugs they have released:
 
 - **Creator** represents a tip recipient. Its wallet address, public slug, and
-  on-chain `jarId` are unique. A creator has many tips, webhooks, and
-  notifications. Its optional notification email is tracked separately from
-  `emailVerifiedAt`, which is set only after the creator confirms the address.
+  on-chain `jarId` are unique. A creator has many tips, webhooks,
+  notifications, and released slugs. Its optional notification email is
+  tracked separately from `emailVerifiedAt`, which is set only after the
+  creator confirms the address.
   `jarId` is unique because each on-chain jar must resolve to
   exactly one creator; the slug and wallet address likewise identify a single
   public profile and account.
+- **ReleasedSlug** records a slug a creator gave up by renaming or claiming a
+  different one, and when. Until `CREATOR_SLUG_HOLD_DAYS` (default 90) have
+  passed, the slug stays unavailable to everyone but its previous owner, so old
+  tip links and QR codes can't be taken over by whoever claims it next. The
+  slug itself is the primary key, so there is one row per slug (its latest
+  release). Each row optionally belongs to one creator; `previousOwnerId` is
+  set to null if that creator is deleted, and the slug is then held with no
+  exempt owner.
 - **Tip** stores an indexed on-chain tip, including its transaction hash,
   ledger, sender, amount, and optional message. Each tip belongs to one creator.
   `txHash` is unique so the indexer can deduplicate events and avoid recording
@@ -91,8 +100,9 @@ delivery paths:
   resume from the correct point after a restart; its default ID of `1` makes
   this a single shared cursor rather than one cursor per creator.
 
-Each model's `id` is a primary key. In addition, `Creator.walletAddress`,
-`Creator.slug`, `Creator.jarId`, and `Tip.txHash` have unique constraints.
+Each model's `id` is a primary key, except `ReleasedSlug`, which is keyed by
+`slug`. In addition, `Creator.walletAddress`, `Creator.slug`, `Creator.jarId`,
+and `Tip.txHash` have unique constraints.
 These are enforced by the database, so they also protect against concurrent
 requests or indexer runs that race past an application-level pre-check.
 

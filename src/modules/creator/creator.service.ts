@@ -38,7 +38,12 @@ export { jarIdForSlug, resolveJarId } from "./jar-id.js";
  * deciding which creators are still unclaimed sign-in placeholders.
  */
 export const PLACEHOLDER_SLUG_REGEX = /^user_[0-9a-f]{8}$/;
-const PROFILE_CACHE_TTL = 60; // seconds
+/**
+ * How long a public profile stays in the Redis cache. Exported so the
+ * resolver's Cache-Control max-age matches it — a browser or CDN holding a
+ * response longer than the server would only serve staler data.
+ */
+export const PROFILE_CACHE_TTL = 60; // seconds
 const MILLIS_PER_DAY = 86_400_000;
 
 /**

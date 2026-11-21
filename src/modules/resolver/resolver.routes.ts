@@ -15,7 +15,10 @@
  */
 
 import type { FastifyPluginAsync } from "fastify";
-import { getCreatorBySlug } from "../creator/creator.service.js";
+import {
+  getCreatorBySlug,
+  PROFILE_CACHE_TTL,
+} from "../creator/creator.service.js";
 import { config } from "../../config.js";
 import { validateSlugParam } from "../../utils/validation.js";
 import { registerDedicatedRateLimit } from "../../utils/rate-limit.js";
@@ -42,6 +45,12 @@ export const resolverRoutes: FastifyPluginAsync = async (app) => {
     if (slug === null) return;
 
     const creator = await getCreatorBySlug(slug);
+
+    // Every visit to a public tip page hydrates through here. The profile is
+    // already cached server-side for PROFILE_CACHE_TTL; this lets a browser or
+    // CDN reuse the response for the same window, as qr.routes.ts and
+    // public.routes.ts do for their public responses.
+    reply.header("Cache-Control", `public, max-age=${PROFILE_CACHE_TTL}`);
 
     return reply.send({
       creator,
