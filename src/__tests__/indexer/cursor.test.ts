@@ -9,7 +9,10 @@
 import {
   IDLE_CHECK_INTERVAL_MS,
   isIdleCheckDue,
+  isSaturatedLedger,
+  planBatch,
   planIdleAdvance,
+  type LedgerBound,
 } from "../../indexer/cursor.js";
 
 const POLL_INTERVAL_MS = 6_000;
@@ -199,5 +202,117 @@ describe("an idle indexer", () => {
     }
 
     expect(writes).toBe(1);
+  });
+});
+
+interface TestEvent extends LedgerBound {
+  id: string;
+}
+
+describe("planBatch", () => {
+  it("returns no events to process and keeps startLedger on an empty batch", () => {
+    expect(planBatch<TestEvent>([], 500, 10)).toEqual({
+      toProcess: [],
+      nextStartLedger: 500,
+      cursorLedger: null,
+    });
+  });
+
+  it("processes all events and advances past maxLedger on a short batch", () => {
+    const events: TestEvent[] = [
+      { id: "e2", ledger: 105 },
+      { id: "e1", ledger: 101 },
+      { id: "e3", ledger: 103 },
+    ];
+
+    const plan = planBatch(events, 100, 10);
+
+    expect(plan).toEqual({
+      toProcess: events,
+      nextStartLedger: 106,
+      cursorLedger: 105,
+    });
+  });
+
+  it("holds back events on maxLedger and sets cursorLedger to maxLedger - 1 on a multi-ledger full batch", () => {
+    const events: TestEvent[] = [
+      { id: "e1", ledger: 200 },
+      { id: "e2", ledger: 201 },
+      { id: "e3", ledger: 202 },
+      { id: "e4", ledger: 202 },
+    ];
+
+    const plan = planBatch(events, 200, 4);
+
+    expect(plan).toEqual({
+      toProcess: [
+        { id: "e1", ledger: 200 },
+        { id: "e2", ledger: 201 },
+      ],
+      nextStartLedger: 202,
+      cursorLedger: 201,
+    });
+  });
+
+  it("processes all events and advances past the ledger on a single-ledger saturated batch", () => {
+    const events: TestEvent[] = [
+      { id: "e1", ledger: 300 },
+      { id: "e2", ledger: 300 },
+      { id: "e3", ledger: 300 },
+    ];
+
+    const plan = planBatch(events, 300, 3);
+
+    expect(plan).toEqual({
+      toProcess: events,
+      nextStartLedger: 301,
+      cursorLedger: 300,
+    });
+  });
+});
+
+describe("isSaturatedLedger", () => {
+  it("returns false for an empty batch", () => {
+    expect(isSaturatedLedger<TestEvent>([], 5)).toBe(false);
+  });
+
+  it("returns false when the batch is below the limit even on a single ledger", () => {
+    const events: TestEvent[] = [
+      { id: "e1", ledger: 100 },
+      { id: "e2", ledger: 100 },
+    ];
+
+    expect(isSaturatedLedger(events, 3)).toBe(false);
+  });
+
+  it("returns false when a full batch spans multiple ledgers", () => {
+    const events: TestEvent[] = [
+      { id: "e1", ledger: 100 },
+      { id: "e2", ledger: 100 },
+      { id: "e3", ledger: 101 },
+    ];
+
+    expect(isSaturatedLedger(events, 3)).toBe(false);
+  });
+
+  it("returns true when the batch is at the limit and confined to one ledger", () => {
+    const events: TestEvent[] = [
+      { id: "e1", ledger: 100 },
+      { id: "e2", ledger: 100 },
+      { id: "e3", ledger: 100 },
+    ];
+
+    expect(isSaturatedLedger(events, 3)).toBe(true);
+  });
+
+  it("returns true when the batch exceeds the limit and is confined to one ledger", () => {
+    const events: TestEvent[] = [
+      { id: "e1", ledger: 100 },
+      { id: "e2", ledger: 100 },
+      { id: "e3", ledger: 100 },
+      { id: "e4", ledger: 100 },
+    ];
+
+    expect(isSaturatedLedger(events, 3)).toBe(true);
   });
 });
