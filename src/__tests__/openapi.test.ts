@@ -32,6 +32,7 @@ describe("OpenAPI route", () => {
         "/creators/me",
         "/creators/me/splits",
         "/creators/me/slug",
+        "/creators/tips/{tipId}/message",
         "/resolve/{slug}",
         "/qr/{slug}",
         "/qr/{slug}/png",
@@ -143,5 +144,35 @@ describe("OpenAPI route", () => {
       emailEnabled: { type: "boolean" },
       webhookEnabled: { type: "boolean" },
     });
+  });
+
+  it("documents hiding and unhiding a tip message", () => {
+    const operation =
+      openApiSpecification.paths["/creators/tips/{tipId}/message"]?.patch;
+
+    expect(operation?.security).toEqual([{ bearerAuth: [] }]);
+    expect(operation?.parameters).toEqual([
+      expect.objectContaining({ name: "tipId", in: "path", required: true }),
+    ]);
+    expect(operation?.requestBody).toMatchObject({
+      required: true,
+      content: {
+        "application/json": {
+          schema: { $ref: "#/components/schemas/MessageVisibilityRequest" },
+        },
+      },
+    });
+    expect(
+      openApiSpecification.components.schemas.MessageVisibilityRequest,
+    ).toEqual({
+      type: "object",
+      properties: {
+        hidden: expect.objectContaining({ type: "boolean" }),
+      },
+      required: ["hidden"],
+    });
+    expect(Object.keys(operation?.responses ?? {})).toEqual(
+      expect.arrayContaining(["200", "400", "401", "404"]),
+    );
   });
 });
