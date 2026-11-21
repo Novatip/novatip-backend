@@ -78,6 +78,7 @@ type OrderBy = Record<string, "asc" | "desc">;
 interface WebhookWhere {
   id?: string;
   creatorId?: string;
+  secret?: string;
 }
 
 interface DeliveryWhere {
@@ -123,11 +124,12 @@ function sortBy<T extends object>(rows: T[], orderBy?: OrderBy): T[] {
   });
 }
 
-function matches(row: FakeWebhook, where: WebhookWhere): boolean {
+function matches(row: FakeWebhook, where: WebhookWhere = {}): boolean {
   if (where.id !== undefined && row.id !== where.id) return false;
   if (where.creatorId !== undefined && row.creatorId !== where.creatorId) {
     return false;
   }
+  if (where.secret !== undefined && row.secret !== where.secret) return false;
   return true;
 }
 
@@ -189,9 +191,11 @@ export function createFakeDb(): FakeDb {
     webhook: {
       create: async ({
         data,
+        select,
       }: {
         data: { creatorId: string; url: string; secret: string };
-      }): Promise<FakeWebhook> => {
+        select?: Select;
+      }): Promise<Projected> => {
         const now = tick();
         const row: FakeWebhook = {
           id: nextId("wh"),
@@ -203,7 +207,7 @@ export function createFakeDb(): FakeDb {
           updatedAt: now,
         };
         webhooks.set(row.id, row);
-        return row;
+        return project(row, select);
       },
 
       findMany: async ({
@@ -213,7 +217,7 @@ export function createFakeDb(): FakeDb {
         skip,
         select,
       }: {
-        where: WebhookWhere;
+        where?: WebhookWhere;
         orderBy?: OrderBy;
         take?: number;
         skip?: number;

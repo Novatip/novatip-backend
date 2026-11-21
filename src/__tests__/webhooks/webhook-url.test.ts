@@ -53,6 +53,12 @@ describe("webhook destination validation", () => {
     ).rejects.toThrow(/private or reserved/);
   });
 
+  it("refuses a hostname that resolves to no addresses and names the hostname", async () => {
+    await expect(
+      assertWebhookDestinationAllowed("https://empty.example/hook", async () => []),
+    ).rejects.toThrow(/empty\.example.*no addresses/);
+  });
+
   it("allows a public literal address", () => {
     expect(isUnsafeWebhookAddress("93.184.216.34")).toBe(false);
     expect(() =>

@@ -44,6 +44,7 @@ jest.unstable_mockModule("../../db.js", () => ({
 const {
   rotateWebhookSecret,
   generateWebhookSecret,
+  MAX_WEBHOOK_SECRET_LENGTH,
   dispatchWebhooks,
   sendTestPing,
   listWebhookDeliveries,
@@ -113,7 +114,9 @@ function signatureFor(
 
 describe("generateWebhookSecret", () => {
   it("returns 24 bytes as hex", () => {
-    expect(generateWebhookSecret()).toMatch(/^[0-9a-f]{48}$/);
+    const secret = generateWebhookSecret();
+    expect(secret).toMatch(/^[0-9a-f]{48}$/);
+    expect(secret.length).toBeLessThanOrEqual(MAX_WEBHOOK_SECRET_LENGTH);
   });
 
   it("returns a different secret every time", () => {
@@ -146,6 +149,32 @@ describe("rotateWebhookSecret ownership", () => {
     await expect(
       rotateWebhookSecret(CREATOR, "wh_missing"),
     ).resolves.toBeNull();
+  });
+});
+
+describe("rotateWebhookSecret secret length", () => {
+  it("accepts a secret at the maximum length", async () => {
+    const webhook = fake.seedWebhook({ creatorId: CREATOR });
+    const secret = "s".repeat(MAX_WEBHOOK_SECRET_LENGTH);
+
+    await expect(
+      rotateWebhookSecret(CREATOR, webhook.id, secret),
+    ).resolves.toMatchObject({ secret });
+  });
+
+  it("rejects a secret over the maximum length with a 400 naming the bound", async () => {
+    const webhook = fake.seedWebhook({ creatorId: CREATOR });
+
+    await expect(
+      rotateWebhookSecret(
+        CREATOR,
+        webhook.id,
+        "s".repeat(MAX_WEBHOOK_SECRET_LENGTH + 1),
+      ),
+    ).rejects.toMatchObject({
+      statusCode: 400,
+      message: `Webhook secret must be at most ${MAX_WEBHOOK_SECRET_LENGTH} characters long.`,
+    });
   });
 });
 
