@@ -144,6 +144,7 @@ INDEXER_START_LEDGER - Ledger to begin indexing from (default: 0)
 INDEXER_RPC_TIMEOUT_MS - Timeout for indexer RPC calls in milliseconds (default: 5000)
 INDEXER_POLL_INTERVAL_MS - How often the indexer polls Soroban RPC for new TipReceived events, in milliseconds (default: 6000)
 INDEXER_POLL_LIMIT - Max TipReceived events fetched from Soroban RPC per poll iteration (default: 200)
+UNOWNED_TIP_RETENTION_DAYS - Days unowned tips (no creatorId, e.g. sent before a jar was claimed) are kept before pruning (default: 90, 0 disables pruning)
 CREATOR_SLUG_HOLD_DAYS - Days a slug released by renaming, claiming, or account deletion stays unavailable (default: 90, 0 disables the hold; deleted accounts have no owner exemption)
 PLACEHOLDER_CREATOR_RETENTION_DAYS - Days before an abandoned sign-in placeholder (unclaimed user_xxxxxxxx slug, no tips, webhooks, notifications or released slugs) becomes eligible for deletion (default: 30, 0 disables the job)
 PLACEHOLDER_CREATOR_PRUNE_BATCH_SIZE - Rows deleted per statement (default: 500)
@@ -965,13 +966,18 @@ npm run dev - hot reload
 npm run build - compile TypeScript
 npm run start - run compiled output
 npm run test - jest
+npm run test:integration - jest, integration tests only
 npm run typecheck - tsc --noEmit
 npm run lint - eslint
+npm run lint:fix - eslint with --fix
+npm run format - prettier --write
 npm run db:generate - regenerate Prisma client
 npm run db:migrate - apply migrations (dev)
 npm run db:migrate:deploy - apply migrations (production)
 npm run db:studio - open Prisma Studio
+npm run db:seed - seed the @demo creator (safe to re-run)
 npm run check:reserved-slugs - report existing creators holding a reserved slug
+npm run check:env-docs - check README.md and .env.example document every env var config.ts reads
 
 ## License
 

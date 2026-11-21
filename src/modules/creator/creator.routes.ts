@@ -26,7 +26,12 @@ import {
 import { config } from "../../config.js";
 import { db } from "../../db.js";
 import { sendEmailVerificationEmail } from "../notifications/email.service.js";
-import { creatorEmail, validateSlugParam } from "../../utils/validation.js";
+import {
+  creatorEmail,
+  nullableHttpsUrl,
+  nullableText,
+  validateSlugParam,
+} from "../../utils/validation.js";
 import { CreatorSplitsSchema } from "./creator-splits.schema.js";
 
 const RenameSlugBody = z.object({
@@ -67,6 +72,16 @@ const MessageVisibilityBody = z.object({
 const EmailVerificationQuery = z.object({
   token: z.string().min(1),
 });
+
+// Decoded body of the signed link sent by PATCH /me. Typed explicitly because
+// ReturnType<typeof app.jwt.verify> resolves against the last (callback)
+// overload and yields void. Partial because the token's contents are only
+// trusted after the checks in GET /email/verify.
+interface EmailVerificationClaims {
+  sub: string;
+  email: string;
+  purpose: "creator-email-verification";
+}
 
 export const creatorRoutes: FastifyPluginAsync = async (app) => {
   // ── GET /:slug — public ────────────────────────────────────────────────────
@@ -161,9 +176,11 @@ export const creatorRoutes: FastifyPluginAsync = async (app) => {
       return reply.status(400).send({ error: query.error.flatten() });
     }
 
-    let claims: ReturnType<typeof app.jwt.verify>;
+    let claims: Partial<EmailVerificationClaims>;
     try {
-      claims = app.jwt.verify(query.data.token);
+      claims = app.jwt.verify<Partial<EmailVerificationClaims>>(
+        query.data.token,
+      );
     } catch {
       return reply.status(400).send({
         error: {

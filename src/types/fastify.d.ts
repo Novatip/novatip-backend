@@ -17,13 +17,21 @@ declare module "fastify" {
 
 declare module "@fastify/jwt" {
   interface FastifyJWT {
-    payload: {
-      sub: string;
-      wallet: string;
-      slug: string;
-      email?: string;
-      purpose?: "creator-email-verification";
-    };
+    // Session tokens carry wallet and slug; the email-verification link
+    // signed by PATCH /creators/me carries only sub, email and purpose.
+    payload:
+      | {
+          sub: string;
+          wallet: string;
+          slug: string;
+          email?: string;
+          purpose?: "creator-email-verification";
+        }
+      | {
+          sub: string;
+          email: string;
+          purpose: "creator-email-verification";
+        };
     user: {
       sub: string;
       wallet: string;
