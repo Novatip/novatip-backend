@@ -351,6 +351,10 @@ export const openApiSpecification = {
     "/resolve/{slug}": {
       get: operation({
         summary: "Resolve the tip-page data for a creator slug",
+        description:
+          "Successful responses are publicly cacheable: they carry " +
+          "`Cache-Control: public, max-age=60`, matching the server-side " +
+          "profile cache.",
         success: json("Creator and tip-page links.", schema("ResolveResponse")),
         parameters: [validatedSlugParameter],
         extraResponses: { "400": validationError, "404": notFound },
