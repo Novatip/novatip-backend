@@ -101,7 +101,7 @@ model Tip {
   amount      String
   /// Optional supporter message (bounded to the contract's 280-byte limit)
   message     String   @default("") @db.VarChar(280)
-  /// Set by the creator to hide the message from public feeds
+  /// Hidden by the creator; public feeds blank the message but keep the tip
   messageHidden Boolean @default(false)
   /// On-chain jar ID, e.g. "@alice". Set for every tip, including unclaimed ones
   jarId       String?

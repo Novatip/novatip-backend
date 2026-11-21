@@ -101,6 +101,12 @@ export const WebhookQuery = z.object({
   offset: z.coerce.number().int().min(0).default(0),
 });
 
+/**
+ * Per-route cap on POST /:id/ping, in requests per minute. Exported so the
+ * rate-limit test asserts against the configured value rather than a copy.
+ */
+export const PING_RATE_LIMIT = 10;
+
 export const webhookRoutes: FastifyPluginAsync = async (app) => {
   app.addHook("onRequest", app.authenticate);
 
@@ -198,7 +204,7 @@ export const webhookRoutes: FastifyPluginAsync = async (app) => {
       // chooses a URL and has the server fetch it on demand, so it should not
       // be usable as a traffic amplifier against a third party — a creator
       // verifying a receiver needs a handful of attempts, not a hundred.
-      config: { rateLimit: { max: 10, timeWindow: "1 minute" } },
+      config: { rateLimit: { max: PING_RATE_LIMIT, timeWindow: "1 minute" } },
     },
     async (request, reply) => {
       const { user } = request;

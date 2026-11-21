@@ -25,9 +25,15 @@ import {
   PUBLIC_TIPS_DEFAULT_LIMIT,
   PUBLIC_TIPS_MAX_LIMIT,
 } from "../analytics/analytics.service.js";
+import { config } from "../../config.js";
 import { validateSlugParam } from "../../utils/validation.js";
+import { registerDedicatedRateLimit } from "../../utils/rate-limit.js";
 
-const RecentQuery = z.object({
+/**
+ * Public feed paging. Exported so the bounds can be unit tested without
+ * standing up the server, like the analytics and webhook query schemas.
+ */
+export const RecentQuery = z.object({
   limit: z.coerce
     .number()
     .int()
@@ -37,8 +43,24 @@ const RecentQuery = z.object({
   cursor: z.string().min(1).optional(),
 });
 
+/**
+ * The public tip page polls this feed on every view, so under the shared
+ * global budget a single popular page (or a scraper) could exhaust that IP's
+ * whole allowance here and be throttled on every other public route too. A
+ * dedicated per-IP limiter gives it its own bucket, configurable via
+ * PUBLIC_RECENT_RATE_LIMIT (default 30) — see config.ts.
+ */
+const PUBLIC_RECENT_RATE_LIMIT = config.rateLimits.publicRecent;
+
 export const publicRoutes: FastifyPluginAsync = async (app) => {
   // No authenticate hook — this plugin is the public surface.
+
+  await registerDedicatedRateLimit(app, {
+    max: PUBLIC_RECENT_RATE_LIMIT,
+    nameSpace: "novatip-public-recent-rate-limit-",
+    code: "PUBLIC_RECENT_RATE_LIMITED",
+    message: "Too many tip feed requests. Try again in a minute.",
+  });
 
   // ── GET /:slug/recent ──────────────────────────────────────────────────────
   app.get("/:slug/recent", async (request, reply) => {
