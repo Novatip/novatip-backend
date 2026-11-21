@@ -6,7 +6,7 @@
  * src/modules/auth/auth.service.ts (sub, wallet, slug).
  */
 
-import "fastify";
+import type { FastifyReply, FastifyRequest } from "fastify";
 import "@fastify/jwt";
 
 declare module "fastify" {
