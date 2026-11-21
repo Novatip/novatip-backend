@@ -341,6 +341,7 @@ describe("sendTipNotification", () => {
           from: tipEvent.from,
           amount: tipEvent.amount.toString(),
           ledger: tipEvent.ledger,
+          txHash: tipEvent.txHash,
         }),
       }),
       select: { id: true },
@@ -424,6 +425,35 @@ describe("sendTipNotification", () => {
         sentAt: null,
       },
       data: { sentAt: new Date("2026-10-20T12:05:00.000Z") },
+    });
+  });
+
+  it("includes txHash in the stored tip notification payload", async () => {
+    mockDb.creator.findUnique.mockResolvedValue({
+      id: "creator_1",
+      slug: "alice",
+      displayName: "Alice",
+      email: "alice@example.com",
+      emailEnabled: false,
+      emailVerifiedAt: null,
+    });
+
+    await sendTipNotification(tipEvent);
+
+    expect(mockDb.notification.create).toHaveBeenCalledWith({
+      data: {
+        creatorId: "creator_1",
+        type: "TIP_RECEIVED",
+        payload: {
+          from: tipEvent.from,
+          amount: tipEvent.amount.toString(),
+          message: tipEvent.message,
+          ledger: tipEvent.ledger,
+          timestamp: tipEvent.timestamp,
+          txHash: tipEvent.txHash,
+        },
+      },
+      select: { id: true },
     });
   });
 });
