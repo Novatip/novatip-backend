@@ -53,6 +53,24 @@ describe("webhook destination validation", () => {
     ).rejects.toThrow(/private or reserved/);
   });
 
+  it("pins the first public resolution instead of using a later private DNS answer", async () => {
+    let resolutions = 0;
+    const resolveAddresses = async () => {
+      resolutions += 1;
+      return resolutions === 1
+        ? [{ address: "93.184.216.34", family: 4 }]
+        : [{ address: "127.0.0.1", family: 4 }];
+    };
+
+    await expect(
+      assertWebhookDestinationAllowed(
+        "https://rebind.example/hook",
+        resolveAddresses,
+      ),
+    ).resolves.toEqual({ address: "93.184.216.34", family: 4 });
+    expect(resolutions).toBe(1);
+  });
+
   it("allows a public literal address", () => {
     expect(isUnsafeWebhookAddress("93.184.216.34")).toBe(false);
     expect(() =>

@@ -276,6 +276,21 @@ describe("claiming a free slug", () => {
   });
 });
 
+describe("updateCreatorSplits", () => {
+  it("writes the splits and invalidates the creator cache", async () => {
+    const splits = [{ to: OTHER_CREATOR, bps: 10_000 }];
+    updateMock.mockResolvedValue(row());
+
+    await updateCreatorSplits(CREATOR, splits);
+
+    expect(updateMock).toHaveBeenCalledWith({
+      where: { id: CREATOR },
+      data: { splits },
+    });
+    expect(cacheInvalidateMock).toHaveBeenCalledWith("creator:alice");
+  });
+});
+
 // ── The P2002 race ───────────────────────────────────────────────────────────────
 
 describe("a losing race against another claim", () => {

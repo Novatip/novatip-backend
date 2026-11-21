@@ -34,6 +34,7 @@ import {
   assertWebhookDestinationAllowed,
   assertWebhookUrlForRegistration,
 } from "./webhook-url.js";
+import { postWebhook } from "./webhook-request.js";
 
 const webhookLogger = logger.child({ component: "webhook" });
 
@@ -47,9 +48,14 @@ function boundPayload(payload: DeliveryPayload, limit: number): object {
   const json = JSON.stringify(payload);
   if (Buffer.byteLength(json, "utf8") <= limit) return payload as object;
 
-  // The test ping is fixed-size and cannot reach the limit, so there is
-  // nothing to trim and no variable field to trim it from.
-  if (payload.event !== "tip.received") return payload as object;
+  const diagnostic = { event: payload.event, truncated: true };
+  if (Buffer.byteLength(JSON.stringify(diagnostic), "utf8") <= limit) {
+    return diagnostic;
+  }
+
+  if (payload.event !== "tip.received") {
+    return {};
+  }
 
   // Truncate message first — it is the largest variable field.
   const truncated: WebhookPayload = {
@@ -61,7 +67,11 @@ function boundPayload(payload: DeliveryPayload, limit: number): object {
 
   // Still too large — strip amountRaw as well.
   const stripped: WebhookPayload = { ...truncated, amountRaw: "" };
-  return stripped as object;
+  if (Buffer.byteLength(JSON.stringify(stripped), "utf8") <= limit) {
+    return stripped as object;
+  }
+
+  return {};
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -288,7 +298,7 @@ async function deliver(
   let timer: NodeJS.Timeout | undefined;
 
   try {
-    await assertWebhookDestinationAllowed(webhook.url);
+    const destination = await assertWebhookDestinationAllowed(webhook.url);
     const secret = decryptWebhookSecret(
       webhook.secret,
       getWebhookEncryptionKey(),
@@ -305,18 +315,22 @@ async function deliver(
     // endpoint to answer 301/302 to an insecure HTTP URL or internal network
     // destination (SSRF), carrying the signed payload with it. A redirect is
     // captured with its 3xx status code and recorded as a failed delivery.
-    const res = await fetch(webhook.url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Novatip-Signature": `sha256=${signature}`,
-        "X-Novatip-Timestamp": timestamp,
-        "User-Agent": "Novatip-Webhook/1.0",
+    const res = await postWebhook(
+      webhook.url,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Novatip-Signature": `sha256=${signature}`,
+          "X-Novatip-Timestamp": timestamp,
+          "User-Agent": "Novatip-Webhook/1.0",
+        },
+        body,
+        signal: controller.signal,
+        redirect: "manual",
       },
-      body,
-      signal: controller.signal,
-      redirect: "manual",
-    });
+      destination,
+    );
 
     statusCode = res.status;
     responseText = await readResponseBody(
