@@ -105,6 +105,46 @@ describe("getTimeSeries", () => {
     );
   });
 
+  it("defaults to 30 UTC days and anchors windowStart to UTC midnight", async () => {
+    // 2026-03-30T23:59:59.999Z -> UTC day 2026-03-30; 30-day window starts 2026-03-01T00:00:00.000Z
+    jest.setSystemTime(new Date("2026-03-30T23:59:59.999Z"));
+    queryRows = [
+      {
+        date: new Date("2026-03-01T00:00:00.000Z"),
+        tipCount: 1n,
+        amountRaw: "1000000",
+      },
+      {
+        date: new Date("2026-03-30T00:00:00.000Z"),
+        tipCount: 2n,
+        amountRaw: "2000000",
+      },
+    ];
+
+    const series = await getTimeSeries("creator-1");
+
+    expect(series).toHaveLength(30);
+    expect(series[0]).toEqual({
+      date: "2026-03-01",
+      tipCount: 1,
+      amountRaw: "1000000",
+    });
+    expect(series[1]).toEqual({
+      date: "2026-03-02",
+      tipCount: 0,
+      amountRaw: "0",
+    });
+    expect(series[29]).toEqual({
+      date: "2026-03-30",
+      tipCount: 2,
+      amountRaw: "2000000",
+    });
+    expect(queryRaw.mock.calls[0]?.[2]).toEqual(
+      new Date("2026-03-01T00:00:00.000Z"),
+    );
+    expect(cacheGet).toHaveBeenCalledWith("analytics:timeseries:creator-1:30");
+  });
+
   it("returns a cached series as is without querying", async () => {
     cachedValue = [{ date: "2026-03-01", tipCount: 7, amountRaw: "70000000" }];
 

@@ -19,7 +19,6 @@ import type {
 } from "fastify";
 import { z } from "zod";
 import { config } from "../../config.js";
-import { redis } from "../../redis.js";
 import { db } from "../../db.js";
 import {
   getTotals,
@@ -61,14 +60,6 @@ export const RecentQuery = z.object({
 export const analyticsRoutes: FastifyPluginAsync = async (app) => {
   // All analytics routes require a valid JWT
   app.addHook("onRequest", app.authenticate);
-
-  await app.register(import("@fastify/rate-limit"), {
-    max: config.rateLimits.csvExport,
-    timeWindow: "1 minute",
-    redis,
-    keyGenerator: (request) => `csv-export:${request.user?.sub ?? "anon"}`,
-    skipOnError: true,
-  });
 
   // ── GET /totals ────────────────────────────────────────────────────────────
   app.get("/totals", async (request, reply) => {
@@ -138,7 +129,21 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
         .send(tipHistoryCsvStream(user.sub));
     };
 
-  app.get("/export", exportCsv);
+  app.get(
+    "/export",
+    {
+      // Tighter per-route limit than the global budget: each export streams the
+      // creator's full tip history, while dashboard polling on /recent and the
+      // summary endpoints stays on the global budget.
+      config: {
+        rateLimit: {
+          max: config.rateLimits.csvExport,
+          timeWindow: "1 minute",
+        },
+      },
+    },
+    exportCsv,
+  );
 
   // ── GET /collaborators ─────────────────────────────────────────────────────
   app.get("/collaborators", async (request, reply) => {
