@@ -148,7 +148,7 @@ const jwtExpiresInSeconds = (() => {
     w: 604_800,
     y: 31_557_600,
   };
-  const seconds = Number(match[1]) * multiplier[match[2]!];
+  const seconds = Number(match[1]) * multiplier[match[2]!]!;
   if (!Number.isSafeInteger(seconds)) {
     throw new Error("JWT_EXPIRES_IN exceeds the supported duration");
   }

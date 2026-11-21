@@ -154,6 +154,7 @@ INDEXER_START_LEDGER - Ledger to begin indexing from (default: 0)
 INDEXER_RPC_TIMEOUT_MS - Timeout for indexer RPC calls in milliseconds (default: 5000)
 INDEXER_POLL_INTERVAL_MS - How often the indexer polls Soroban RPC for new TipReceived events, in milliseconds (default: 6000)
 INDEXER_POLL_LIMIT - Max TipReceived events fetched from Soroban RPC per poll iteration (default: 200)
+UNOWNED_TIP_RETENTION_DAYS - Days unowned tips (no creatorId, e.g. sent before a jar was claimed) are kept before pruning (default: 90, 0 disables pruning)
 CREATOR_SLUG_HOLD_DAYS - Days a slug released by renaming, claiming, or account deletion stays unavailable (default: 90, 0 disables the hold; deleted accounts have no owner exemption)
 PLACEHOLDER_CREATOR_RETENTION_DAYS - Days before an abandoned sign-in placeholder (unclaimed user_xxxxxxxx slug, no tips, webhooks, notifications or released slugs) becomes eligible for deletion (default: 30, 0 disables the job)
 PLACEHOLDER_CREATOR_PRUNE_BATCH_SIZE - Rows deleted per statement (default: 500)
@@ -176,6 +177,10 @@ RATE_LIMIT_WINDOW - Window for RATE_LIMIT_MAX, in @fastify/rate-limit's own form
 AUTH_CHALLENGE_RATE_LIMIT - Per-IP cap on POST /auth/challenge, req/min (default: 5)
 AUTH_VERIFY_RATE_LIMIT - Per-IP cap on POST /auth/verify, req/min (default: 5)
 QR_RATE_LIMIT - Per-IP cap on the QR endpoints, req/min (default: 10)
+CSV_EXPORT_RATE_LIMIT - Per-user cap on CSV export, req/min; each call streams the creator's entire tip history (default: 5)
+TRUST_PROXY - Number of proxy hops to trust; when > 0, request.ip comes from X-Forwarded-For. Enabling without a proxy lets clients spoof their address (default: 0)
+REQUEST_TIMEOUT_MS - How long the server waits for a complete request body, in milliseconds (default: 10000)
+CONNECTION_TIMEOUT_MS - Idle connection limit, in milliseconds (default: 60000)
 APP_BASE_URL - Frontend base URL (default: http://localhost:3000)
 API_BASE_URL - Public backend base URL for email confirmation links (default: http://localhost:3001)
 CORS_ALLOWED_ORIGINS - Comma-separated origins allowed through CORS in production (default: just APP_BASE_URL; ignored outside production, where any origin is allowed)
@@ -973,13 +978,18 @@ npm run dev - hot reload
 npm run build - compile TypeScript
 npm run start - run compiled output
 npm run test - jest
+npm run test:integration - jest, integration tests only
 npm run typecheck - tsc --noEmit
 npm run lint - eslint
+npm run lint:fix - eslint with --fix
+npm run format - prettier --write
 npm run db:generate - regenerate Prisma client
 npm run db:migrate - apply migrations (dev)
 npm run db:migrate:deploy - apply migrations (production)
 npm run db:studio - open Prisma Studio
+npm run db:seed - seed the @demo creator (safe to re-run)
 npm run check:reserved-slugs - report existing creators holding a reserved slug
+npm run check:env-docs - check README.md and .env.example document every env var config.ts reads
 
 ## License
 
