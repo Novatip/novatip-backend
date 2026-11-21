@@ -631,9 +631,8 @@ function assertSecretLength(secret: string): void {
 /**
  * Register a webhook, rejecting the request once the creator is at the cap.
  *
- * The count and the insert run in one interactive transaction: two concurrent
- * registrations that each read the pre-insert count would otherwise both pass
- * the check and leave the creator one over the limit.
+ * The creator row lock makes the count and insert serial per creator under
+ * READ COMMITTED, so concurrent registrations cannot both pass a stale count.
  */
 export async function createWebhook(
   creatorId: string,
@@ -657,6 +656,9 @@ export async function createWebhook(
   }
 
   return db.$transaction(async (tx) => {
+    await tx.$queryRaw`
+      SELECT "id" FROM "Creator" WHERE "id" = ${creatorId} FOR UPDATE
+    `;
     const existing = await tx.webhook.count({ where: { creatorId } });
     assertWebhookLimit(existing, limit);
     return tx.webhook.create({
@@ -845,8 +847,17 @@ export async function deleteWebhook(
   creatorId: string,
   webhookId: string,
 ): Promise<boolean> {
-  const { count } = await db.webhook.deleteMany({
-    where: { id: webhookId, creatorId },
+  return db.$transaction(async (tx) => {
+    const webhook = await tx.webhook.findFirst({
+      where: { id: webhookId, creatorId },
+      select: { id: true },
+    });
+    if (!webhook) return false;
+
+    await tx.webhookDelivery.deleteMany({ where: { webhookId } });
+    const { count } = await tx.webhook.deleteMany({
+      where: { id: webhookId, creatorId },
+    });
+    return count > 0;
   });
-  return count > 0;
 }

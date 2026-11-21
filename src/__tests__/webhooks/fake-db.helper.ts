@@ -437,6 +437,7 @@ export function createFakeDb(): FakeDb {
   const client = Object.assign(db, {
     $transaction: async <T>(fn: (tx: typeof db) => Promise<T>): Promise<T> =>
       fn(db),
+    $queryRaw: async (): Promise<unknown[]> => [],
   });
 
   return {

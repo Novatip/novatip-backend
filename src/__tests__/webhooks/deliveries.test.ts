@@ -41,6 +41,7 @@ jest.unstable_mockModule("../../db.js", () => ({
 const {
   listWebhookDeliveries,
   dispatchWebhooks,
+  deleteWebhook,
   DEFAULT_DELIVERY_PAGE_SIZE,
   MAX_DELIVERY_PAGE_SIZE,
 } = await import("../../modules/webhooks/webhooks.service.js");
@@ -97,6 +98,33 @@ describe("listWebhookDeliveries ownership", () => {
     const rows = await listWebhookDeliveries(CREATOR, mine.id);
 
     expect(idsOf(rows ?? [])).toEqual([ours.id]);
+  });
+});
+
+describe("deleteWebhook", () => {
+  it("deletes delivery history before removing an owned webhook", async () => {
+    const webhook = fake.seedWebhook({ creatorId: CREATOR });
+    fake.seedDelivery({ webhookId: webhook.id });
+
+    await expect(deleteWebhook(CREATOR, webhook.id)).resolves.toBe(true);
+
+    expect(fake.webhooks.has(webhook.id)).toBe(false);
+    expect(fake.deliveries).toHaveLength(0);
+  });
+
+  it("returns false for another creator's webhook without deleting history", async () => {
+    const webhook = fake.seedWebhook({ creatorId: OTHER_CREATOR });
+    fake.seedDelivery({ webhookId: webhook.id });
+
+    await expect(deleteWebhook(CREATOR, webhook.id)).resolves.toBe(false);
+
+    expect(fake.webhooks.has(webhook.id)).toBe(true);
+    expect(fake.deliveries).toHaveLength(1);
+  });
+
+  it("returns false for a nonexistent webhook", async () => {
+    await expect(deleteWebhook(CREATOR, "wh_missing")).resolves.toBe(false);
+    expect(fake.deliveries).toHaveLength(0);
   });
 });
 

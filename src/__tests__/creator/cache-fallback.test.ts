@@ -73,4 +73,15 @@ describe("creator lookup when Redis is unavailable", () => {
       60,
     );
   });
+
+  it("returns 404 and does not cache when both cache and database miss", async () => {
+    redisGetMock.mockResolvedValue(null);
+    creatorFindUniqueMock.mockResolvedValue(null);
+
+    await expect(getCreatorBySlug("missing")).rejects.toMatchObject({
+      statusCode: 404,
+    });
+
+    expect(redisSetMock).not.toHaveBeenCalled();
+  });
 });
