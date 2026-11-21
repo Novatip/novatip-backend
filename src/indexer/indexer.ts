@@ -27,9 +27,11 @@ import {
 import { config } from "../config.js";
 import {
   isIdleCheckDue,
+  isRetentionWindowError,
   isSaturatedLedger,
   planBatch,
   planIdleAdvance,
+  planRetentionRecovery,
 } from "./cursor.js";
 import { fetchLatestLedger } from "./rpc.js";
 import { calculatePollBackoff } from "./backoff.js";
@@ -245,6 +247,38 @@ async function runLoop(options?: IndexerOptions): Promise<void> {
         { err, startLedger, consecutiveFailures, backoffMs },
         "poll error",
       );
+
+      if (isRetentionWindowError(err)) {
+        try {
+          const head = await fetchLatestLedger(
+            config.stellar.rpcUrl,
+            config.stellar.rpcTimeoutMs,
+          );
+          const recovery = planRetentionRecovery(head, startLedger);
+          if (recovery) {
+            indexerLogger.warn(
+              {
+                previousStartLedger: startLedger,
+                newStartLedger: recovery.nextStartLedger,
+                cursorLedger: recovery.cursorLedger,
+                skippedLedgers: recovery.nextStartLedger - startLedger,
+              },
+              "startLedger outside RPC retention window — advancing to chain head",
+            );
+            await updateCursor(recovery.cursorLedger);
+            startLedger = recovery.nextStartLedger;
+            persistedCursor = recovery.cursorLedger;
+            updateIndexerCursor(recovery.cursorLedger);
+            updateIndexerLag(0);
+          }
+        } catch (headErr) {
+          indexerLogger.warn(
+            { err: headErr, startLedger },
+            "could not read chain head during retention-window recovery",
+          );
+        }
+      }
+
       if (!running) break;
       await interruptibleSleep(backoffMs);
       continue;

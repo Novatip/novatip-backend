@@ -205,4 +205,72 @@ describe("indexer runLoop / handleEvent wiring (#283)", () => {
     expect(updateCursorMock).toHaveBeenCalledTimes(1);
     expect(updateCursorMock).toHaveBeenCalledWith(102);
   });
+
+  it("recovers from persistent retention-window errors by advancing startLedger to chain head (#282)", async () => {
+    readCursorMock.mockResolvedValue(100); // startLedger = 101
+
+    // Initial idle check fails or returns 105; recovery calls fetchLatestLedger
+    // (first fails, then returns 5000) so we exercise repeated retention errors.
+    fetchLatestLedgerMock
+      .mockResolvedValueOnce(105)
+      .mockRejectedValueOnce(new Error("head temporarily unavailable"))
+      .mockResolvedValueOnce(5000);
+
+    let callCount = 0;
+    fetchTipEventsMock.mockImplementation(async () => {
+      callCount++;
+      if (callCount <= 2) {
+        throw new Error(
+          "startLedger must be within the ledger range: 4000-5000",
+        );
+      }
+      await stopIndexer();
+      return [];
+    });
+
+    await startIndexer({ pollIntervalMs: 1, pollLimit: 200 });
+
+    // First two attempts used stale startLedger 101; third recovered to 5000.
+    expect(fetchTipEventsMock).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ startLedger: 101 }),
+    );
+    expect(fetchTipEventsMock).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ startLedger: 101 }),
+    );
+    expect(fetchTipEventsMock).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({ startLedger: 5000 }),
+    );
+
+    expect(updateCursorMock).toHaveBeenCalledWith(4999);
+  });
+
+  it("does not advance startLedger on transient RPC errors (#282)", async () => {
+    readCursorMock.mockResolvedValue(100);
+    fetchLatestLedgerMock.mockResolvedValue(5000);
+
+    let callCount = 0;
+    fetchTipEventsMock.mockImplementation(async () => {
+      callCount++;
+      if (callCount === 1) {
+        throw new Error("ECONNREFUSED");
+      }
+      await stopIndexer();
+      return [];
+    });
+
+    await startIndexer({ pollIntervalMs: 1, pollLimit: 200 });
+
+    expect(fetchTipEventsMock).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ startLedger: 101 }),
+    );
+    expect(fetchTipEventsMock).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ startLedger: 101 }),
+    );
+    expect(updateCursorMock).not.toHaveBeenCalled();
+  });
 });
