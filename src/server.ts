@@ -60,6 +60,7 @@ export async function buildServer(
     max: config.rateLimits.global.max,
     timeWindow: config.rateLimits.global.window,
     redis,
+    skipOnError: true,
   });
 
   // ── Auth plugin ───────────────────────────────────────────────────────────
