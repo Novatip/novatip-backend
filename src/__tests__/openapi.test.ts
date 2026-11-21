@@ -1,4 +1,5 @@
 import Fastify from "fastify";
+import { Prisma } from "@prisma/client";
 import { openApiSpecification } from "../openapi.js";
 import { openApiRoutes } from "../modules/openapi/openapi.routes.js";
 
@@ -105,7 +106,7 @@ describe("OpenAPI route", () => {
       "/qr/{slug}",
       "/qr/{slug}/png",
       "/public/{slug}/recent",
-    ];
+    ] as const;
 
     for (const path of slugPaths) {
       const operation = openApiSpecification.paths[path]?.get;
@@ -125,5 +126,22 @@ describe("OpenAPI route", () => {
       });
       expect(operation?.responses).toHaveProperty("400");
     }
+  });
+
+  it("documents every column the full-row creator responses return", () => {
+    // claimSlug, updateProfile, renameSlug and updateCreatorSplits all call
+    // db.creator.update() without a select, so the response carries every
+    // scalar column on the Creator model.
+    const creator = openApiSpecification.components.schemas.Creator;
+    const columns = Object.values(Prisma.CreatorScalarFieldEnum);
+
+    expect(Object.keys(creator.properties)).toEqual(
+      expect.arrayContaining(columns),
+    );
+    expect(creator.required).toEqual(expect.arrayContaining(columns));
+    expect(creator.properties).toMatchObject({
+      emailEnabled: { type: "boolean" },
+      webhookEnabled: { type: "boolean" },
+    });
   });
 });

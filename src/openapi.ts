@@ -891,6 +891,14 @@ export const openApiSpecification = {
             format: "date-time",
             nullable: true,
           },
+          emailEnabled: {
+            type: "boolean",
+            description: "Whether tip-notification emails are switched on.",
+          },
+          webhookEnabled: {
+            type: "boolean",
+            description: "Whether tip webhooks are dispatched.",
+          },
           jarId: { type: "string" },
           splits: { type: "array", items: schema("Split") },
           createdAt: { type: "string", format: "date-time" },
@@ -905,6 +913,8 @@ export const openApiSpecification = {
           "avatarUrl",
           "email",
           "emailVerifiedAt",
+          "emailEnabled",
+          "webhookEnabled",
           "jarId",
           "splits",
           "createdAt",
