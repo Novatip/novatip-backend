@@ -41,6 +41,10 @@ import {
   recordPollError,
   recordSuccessfulPoll,
 } from "./status.js";
+import {
+  updateIndexerCursor,
+  updateIndexerLag,
+} from "../modules/metrics/metrics.service.js";
 
 /**
  * How often (in ms) the indexer loop polls the Soroban RPC for new TipReceived events.
