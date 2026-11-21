@@ -166,6 +166,8 @@ RATE_LIMIT_WINDOW - Window for RATE_LIMIT_MAX, in @fastify/rate-limit's own form
 AUTH_CHALLENGE_RATE_LIMIT - Per-IP cap on POST /auth/challenge, req/min (default: 5)
 AUTH_VERIFY_RATE_LIMIT - Per-IP cap on POST /auth/verify, req/min (default: 5)
 QR_RATE_LIMIT - Per-IP cap on the QR endpoints, req/min (default: 10)
+RESOLVE_RATE_LIMIT - Per-IP cap on GET /resolve/:slug, req/min (default: 30)
+PUBLIC_RECENT_RATE_LIMIT - Per-IP cap on GET /public/:slug/recent, req/min (default: 30)
 APP_BASE_URL - Frontend base URL (default: http://localhost:3000)
 API_BASE_URL - Public backend base URL for email confirmation links (default: http://localhost:3001)
 CORS_ALLOWED_ORIGINS - Comma-separated origins allowed through CORS in production (default: just APP_BASE_URL; ignored outside production, where any origin is allowed)

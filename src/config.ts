@@ -397,6 +397,23 @@ export const config = {
     qr: optionalInt("QR_RATE_LIMIT", 10),
 
     /**
+     * Per-IP cap on GET /resolve/:slug. The tip page calls it on every view,
+     * so under the shared global budget a single popular page (or a scraper)
+     * could spend that IP's entire allowance on this one cheap, cached route
+     * and be throttled on every other public route as a result. Kept below
+     * the global budget, together with PUBLIC_RECENT_RATE_LIMIT, so these two
+     * routes alone cannot exhaust it.
+     */
+    resolve: optionalInt("RESOLVE_RATE_LIMIT", 30),
+
+    /**
+     * Per-IP cap on GET /public/:slug/recent, the tip page's supporter feed.
+     * Same reasoning as RESOLVE_RATE_LIMIT — the page polls it, so it gets
+     * its own bucket instead of draining the shared one.
+     */
+    publicRecent: optionalInt("PUBLIC_RECENT_RATE_LIMIT", 30),
+
+    /**
      * Per-user cap on CSV export. Each call streams a creator's entire tip
      * history through the database in batches of 500.
      */
