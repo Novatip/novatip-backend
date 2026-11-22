@@ -66,13 +66,15 @@ export const notificationRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const { user } = request;
-    const notifications = await listNotifications(
+    const page = await listNotifications(
       user.sub,
       query.data.limit,
       query.data.offset,
+      query.data.unread ?? false,
+      query.data.cursor ?? null,
     );
 
-    return reply.send({ notifications });
+    return reply.send(page);
   });
 
   // ── GET /preferences ──────────────────────────────────────────────────────
