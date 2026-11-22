@@ -195,12 +195,21 @@ export const config = {
 
   stellar: {
     network: stellarNetwork,
-    rpcUrl: optional("SOROBAN_RPC_URL", "https://soroban-testnet.stellar.org"),
-    horizonUrl: optional("HORIZON_URL", "https://horizon-testnet.stellar.org"),
-    passphrase: optional(
-      "NETWORK_PASSPHRASE",
-      "Test SDF Network ; September 2015",
-    ),
+    rpcUrl:
+      stellarNetwork === "mainnet"
+        ? require("SOROBAN_RPC_URL")
+        : optional("SOROBAN_RPC_URL", "https://soroban-testnet.stellar.org"),
+    horizonUrl:
+      stellarNetwork === "mainnet"
+        ? require("HORIZON_URL")
+        : optional("HORIZON_URL", "https://horizon-testnet.stellar.org"),
+    passphrase:
+      stellarNetwork === "mainnet"
+        ? require("NETWORK_PASSPHRASE")
+        : optional(
+            "NETWORK_PASSPHRASE",
+            "Test SDF Network ; September 2015",
+          ),
     tipSplitterContractId: require("TIP_SPLITTER_CONTRACT_ID"),
     // Defaulting this on mainnet would silently point at an asset that
     // doesn't exist there (the fallback below is the *testnet* USDC SAC), so
