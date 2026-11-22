@@ -1,6 +1,8 @@
 import { isValidAccountId } from "@novatip/sdk";
 import { z } from "zod";
 
+export const MAX_CREATOR_SPLITS = 50;
+
 export const CreatorSplitsSchema = z
   .array(
     z.object({
@@ -10,6 +12,9 @@ export const CreatorSplitsSchema = z
       bps: z.number().int().min(1).max(10_000),
     }),
   )
+  .max(MAX_CREATOR_SPLITS, {
+    message: `A creator may not configure more than ${MAX_CREATOR_SPLITS} splits.`,
+  })
   .superRefine((splits, context) => {
     const recipients = new Set<string>();
     let totalBps = 0;

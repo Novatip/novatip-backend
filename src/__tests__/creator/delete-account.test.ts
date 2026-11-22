@@ -96,9 +96,7 @@ describe("deleteCreator", () => {
       where: { id: CREATOR_ID },
       select: { slug: true },
     });
-    expect(deleteNotificationsMock).toHaveBeenCalledWith({
-      where: { creatorId: CREATOR_ID },
-    });
+    expect(deleteNotificationsMock).not.toHaveBeenCalled();
     expect(findWebhooksMock).toHaveBeenCalledWith({
       where: { creatorId: CREATOR_ID },
       select: { id: true },
@@ -124,9 +122,6 @@ describe("deleteCreator", () => {
     expect(cacheInvalidateMock).toHaveBeenCalledWith("creator:alice");
     expect(revokeCreatorTokensMock).toHaveBeenCalledWith(CREATOR_ID);
 
-    expect(deleteNotificationsMock.mock.invocationCallOrder[0]).toBeLessThan(
-      deleteWebhooksMock.mock.invocationCallOrder[0]!,
-    );
     expect(deleteDeliveriesMock.mock.invocationCallOrder[0]).toBeLessThan(
       deleteWebhooksMock.mock.invocationCallOrder[0]!,
     );
