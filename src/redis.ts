@@ -20,8 +20,8 @@ import { logger } from "./utils/logger.js";
 const redisLogger = logger.child({ component: "redis" });
 
 export const redis = new Redis(config.redisUrl, {
-  maxRetriesPerRequest: 3,
-  enableReadyCheck: true,
+  maxRetriesPerRequest: config.redis.maxRetriesPerRequest,
+  enableReadyCheck: config.redis.enableReadyCheck,
   lazyConnect: true,
 });
 

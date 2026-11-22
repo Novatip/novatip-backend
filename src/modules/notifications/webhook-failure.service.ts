@@ -22,7 +22,7 @@
 import { db } from "../../db.js";
 import { logger } from "../../utils/logger.js";
 
-const failureLogger = logger.child({ component: "notifications" });
+const failureLogger = logger.child({ component: "notifications:webhook-failure" });
 
 /** At most one WEBHOOK_FAILED row per webhook within this span. */
 const SUPPRESS_WINDOW_MS = 60 * 60 * 1000;

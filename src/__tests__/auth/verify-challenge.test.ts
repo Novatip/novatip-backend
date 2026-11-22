@@ -10,6 +10,7 @@ import { jest } from "@jest/globals";
 import { Prisma } from "@prisma/client";
 import { Keypair } from "@stellar/stellar-sdk";
 import { jarIdForSlug } from "../../modules/creator/jar-id.js";
+import { buildChallengeMessage, signSep53Message } from "./auth-test.helper.js";
 
 process.env["DATABASE_URL"] ??= "postgresql://user:pass@localhost:5432/test";
 process.env["JWT_SECRET"] ??= "test-secret-not-used-for-signing";
@@ -96,7 +97,8 @@ describe("verifyChallenge (#88 single query and #89 slug collision handling)", (
   const kp = Keypair.random();
   const wallet = kp.publicKey();
   const nonce = "0123456789abcdef".repeat(4);
-  const sig = kp.sign(Buffer.from(nonce, "utf8")).toString("hex");
+  let signedMessage: string;
+  let sig: string;
   const signJwtMock = jest.fn(
     (_payload: { sub: string; wallet: string; slug: string }) =>
       "signed-jwt-token",
@@ -105,15 +107,19 @@ describe("verifyChallenge (#88 single query and #89 slug collision handling)", (
   beforeEach(() => {
     jest.clearAllMocks();
     consumeAuthNonceMock.mockResolvedValue(nonce);
+    signedMessage = buildChallengeMessage({ walletAddress: wallet, nonce });
+    sig = signSep53Message(kp, signedMessage);
   });
 
   it("resolves an existing creator in a single query and returns isNewUser: false (#88)", async () => {
     const existingCreator = makeFakeCreator({ walletAddress: wallet });
     findUniqueMock.mockResolvedValue(existingCreator);
 
-    const result = await verifyChallenge(wallet, sig, signJwtMock);
+    const result = await verifyChallenge(wallet, signedMessage, sig, signJwtMock);
 
     expect(result).toEqual({ jwt: "signed-jwt-token", isNewUser: false });
+    expect(consumeAuthNonceMock).toHaveBeenCalledTimes(1);
+    expect(consumeAuthNonceMock).toHaveBeenCalledWith(wallet);
     expect(findUniqueMock).toHaveBeenCalledTimes(1);
     expect(findUniqueMock).toHaveBeenCalledWith({
       where: { walletAddress: wallet },
@@ -134,7 +140,7 @@ describe("verifyChallenge (#88 single query and #89 slug collision handling)", (
     });
     createMock.mockResolvedValue(newCreator);
 
-    const result = await verifyChallenge(wallet, sig, signJwtMock);
+    const result = await verifyChallenge(wallet, signedMessage, sig, signJwtMock);
 
     expect(result).toEqual({ jwt: "signed-jwt-token", isNewUser: true });
     expect(findUniqueMock).toHaveBeenCalledTimes(1);
@@ -148,6 +154,11 @@ describe("verifyChallenge (#88 single query and #89 slug collision handling)", (
     });
     const { data } = createMock.mock.calls[0]![0];
     expect(data.jarId).toBe(jarIdForSlug(data.slug));
+    expect(signJwtMock).toHaveBeenCalledWith({
+      sub: newCreator.id,
+      wallet: wallet,
+      slug: newCreator.slug,
+    });
   });
 
   it("retries on slug/jarId collision (P2002) and succeeds on subsequent attempt (#89)", async () => {
@@ -162,22 +173,28 @@ describe("verifyChallenge (#88 single query and #89 slug collision handling)", (
       .mockRejectedValueOnce(p2002Error(["slug"]))
       .mockResolvedValueOnce(newCreator);
 
-    const result = await verifyChallenge(wallet, sig, signJwtMock);
+    const result = await verifyChallenge(wallet, signedMessage, sig, signJwtMock);
 
     expect(result).toEqual({ jwt: "signed-jwt-token", isNewUser: true });
     expect(findUniqueMock).toHaveBeenCalledTimes(1);
     expect(createMock).toHaveBeenCalledTimes(2);
+    expect(signJwtMock).toHaveBeenCalledWith({
+      sub: newCreator.id,
+      wallet: wallet,
+      slug: newCreator.slug,
+    });
   });
 
   it("bounds the number of collision retry attempts and fails if all collide (#89)", async () => {
     findUniqueMock.mockResolvedValue(null);
     createMock.mockRejectedValue(p2002Error(["slug"]));
 
-    await expect(verifyChallenge(wallet, sig, signJwtMock)).rejects.toThrow(
-      Prisma.PrismaClientKnownRequestError,
-    );
+    await expect(
+      verifyChallenge(wallet, signedMessage, sig, signJwtMock),
+    ).rejects.toThrow(Prisma.PrismaClientKnownRequestError);
 
     expect(createMock).toHaveBeenCalledTimes(MAX_CREATOR_CREATE_ATTEMPTS);
+    expect(signJwtMock).not.toHaveBeenCalled();
   });
 
   it("handles concurrent first sign-in race gracefully without 500 and keeps isNewUser: true (#87)", async () => {
@@ -195,7 +212,7 @@ describe("verifyChallenge (#88 single query and #89 slug collision handling)", (
     // Recovery lookup finds the winner row
     findUniqueMock.mockResolvedValueOnce(winningCreator);
 
-    const result = await verifyChallenge(wallet, sig, signJwtMock);
+    const result = await verifyChallenge(wallet, signedMessage, sig, signJwtMock);
 
     expect(result).toEqual({ jwt: "signed-jwt-token", isNewUser: true });
     expect(findUniqueMock).toHaveBeenCalledTimes(2);

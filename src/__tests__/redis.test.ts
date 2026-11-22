@@ -20,6 +20,7 @@ let getError: Error | null = null;
 let setError: Error | null = null;
 let delError: Error | null = null;
 const loggerWarnMock = jest.fn();
+const redisConstructorArgs: Array<{ url: unknown; options: unknown }> = [];
 
 const mockClient = {
   getdel: async (key: string): Promise<string | null> => {
@@ -45,10 +46,12 @@ const mockClient = {
 };
 
 jest.unstable_mockModule("ioredis", () => ({
-  Redis: function Redis() {
+  Redis: function Redis(url: unknown, options: unknown) {
+    redisConstructorArgs.push({ url, options });
     return mockClient;
   },
-  default: function Redis() {
+  default: function Redis(url: unknown, options: unknown) {
+    redisConstructorArgs.push({ url, options });
     return mockClient;
   },
 }));
@@ -150,5 +153,14 @@ describe("cacheGet", () => {
       { err: error, key: fullKey },
       "failed to invalidate cache entry",
     );
+  });
+
+  it("initializes Redis client with configured retry and readiness settings", () => {
+    expect(redisConstructorArgs.length).toBeGreaterThan(0);
+    expect(redisConstructorArgs[0]?.options).toMatchObject({
+      maxRetriesPerRequest: 3,
+      enableReadyCheck: true,
+      lazyConnect: true,
+    });
   });
 });
