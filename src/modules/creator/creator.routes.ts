@@ -105,7 +105,9 @@ export const creatorRoutes: FastifyPluginAsync = async (app) => {
     let viewerId: string | undefined;
     try {
       await request.jwtVerify();
-      viewerId = request.user.sub;
+      if (request.user.purpose === undefined) {
+        viewerId = request.user.sub;
+      }
     } catch {
       // Unauthenticated callers get the hold applied to everyone.
     }
