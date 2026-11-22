@@ -183,4 +183,23 @@ describe("OpenAPI route", () => {
       description: "Creator account not found.",
     });
   });
+
+  it("documents Cache-Control and Content-Disposition headers on QR and CSV export routes", () => {
+    const svgHeaders =
+      openApiSpecification.paths["/qr/{slug}"]?.get?.responses?.["200"]
+        ?.headers;
+    expect(svgHeaders).toHaveProperty("Cache-Control");
+
+    const pngHeaders =
+      openApiSpecification.paths["/qr/{slug}/png"]?.get?.responses?.["200"]
+        ?.headers;
+    expect(pngHeaders).toHaveProperty("Cache-Control");
+    expect(pngHeaders).toHaveProperty("Content-Disposition");
+
+    const csvHeaders =
+      openApiSpecification.paths["/analytics/export"]?.get?.responses?.["200"]
+        ?.headers;
+    expect(csvHeaders).toHaveProperty("Content-Disposition");
+    expect(csvHeaders).toHaveProperty("Cache-Control");
+  });
 });
