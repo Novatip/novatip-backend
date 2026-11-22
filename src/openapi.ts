@@ -295,7 +295,11 @@ export const openApiSpecification = {
         success: json("The updated creator.", schema("CreatorResponse")),
         requestBody: requestBody(schema("UpdateProfileRequest")),
         secured: true,
-        extraResponses: { "400": validationError, "404": notFound },
+        extraResponses: {
+          "400": validationError,
+          "404": notFound,
+          "429": rateLimited,
+        },
       }),
       delete: operation({
         summary: "Delete the authenticated creator account",
