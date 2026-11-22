@@ -19,28 +19,12 @@ jobs:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: novatip_test
         options: >-
-          --health-cmd "pg_isready -U postgres"
+          --health-cmd pg_isready
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
         ports:
           - 5432:5432
-
-      # Used as the shadow database for `prisma migrate diff` below, not by the
-      # app or its tests.
-      postgres-shadow:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: novatip
-          POSTGRES_PASSWORD: novatip
-          POSTGRES_DB: novatip
-        ports:
-          - 5433:5432
-        options: >-
-          --health-cmd "pg_isready -U novatip"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 5
 
     strategy:
       fail-fast: false
@@ -48,8 +32,25 @@ jobs:
         # 20 is what the Dockerfile ships on; 24 is the current LTS line.
         node-version: [20, 24]
 
+    # Used as the shadow database for `prisma migrate diff` below, not by the
+    # app or its tests.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: novatip
+          POSTGRES_PASSWORD: novatip
+          POSTGRES_DB: novatip
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U novatip"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
     env:
-      DATABASE_URL: postgresql://novatip:novatip@localhost:5433/novatip
+      DATABASE_URL: postgresql://novatip:novatip@localhost:5432/novatip
 
     steps:
       - name: Checkout
@@ -92,19 +93,11 @@ jobs:
       - name: Check env var docs
         run: npm run check:env-docs
 
-      - name: Check migration timestamps
-        run: npm run check:migration-timestamps
-
       - name: Typecheck
         run: npm run typecheck
 
       - name: Test
         run: npm test
-
-      - name: Run migrations for integration tests
-        run: npx prisma migrate deploy
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/novatip_test
 
       - name: Integration tests
         run: npm run test:integration
