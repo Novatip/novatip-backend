@@ -1015,7 +1015,13 @@ export const openApiSpecification = {
           jarId: { type: "string", minLength: 1 },
           displayName: { type: "string", maxLength: 80 },
           bio: { type: "string", maxLength: 300 },
-          splits: { type: "array", items: schema("Split") },
+          splits: {
+            type: "array",
+            maxItems: 50,
+            description:
+              "Recipients must be unique, total basis points must not exceed 10000, and at most 50 splits may be configured.",
+            items: schema("Split"),
+          },
         },
         required: ["slug"],
       },
@@ -1045,8 +1051,9 @@ export const openApiSpecification = {
           splits: {
             type: "array",
             minItems: 1,
+            maxItems: 50,
             description:
-              "Recipients must be unique, and total basis points must not exceed 10000.",
+              "Recipients must be unique, total basis points must not exceed 10000, and at most 50 splits may be configured.",
             items: schema("Split"),
           },
         },

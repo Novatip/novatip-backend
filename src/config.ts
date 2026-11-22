@@ -171,6 +171,11 @@ export const config = {
 
   databaseUrl: require("DATABASE_URL"),
   redisUrl: optional("REDIS_URL", "redis://localhost:6379"),
+  redis: {
+    url: optional("REDIS_URL", "redis://localhost:6379"),
+    maxRetriesPerRequest: optionalInt("REDIS_MAX_RETRIES_PER_REQUEST", 3, 0),
+    enableReadyCheck: optionalBoolean("REDIS_ENABLE_READY_CHECK", true),
+  },
 
   jwtSecret: jwtSecretValue,
   jwtExpiresIn,
@@ -290,15 +295,16 @@ export const config = {
      */
     retention: {
       /** Successful deliveries are the bulk of the rows and the least useful. */
-      successDays: optionalInt("WEBHOOK_DELIVERY_RETENTION_DAYS", 30),
+      successDays: optionalInt("WEBHOOK_DELIVERY_RETENTION_DAYS", 30, 0),
       /** Failures are kept longer — they are what anyone actually debugs. */
-      failureDays: optionalInt("WEBHOOK_DELIVERY_FAILURE_RETENTION_DAYS", 90),
+      failureDays: optionalInt("WEBHOOK_DELIVERY_FAILURE_RETENTION_DAYS", 90, 0),
       /** Rows deleted per statement, so a large backlog never locks the table. */
-      batchSize: optionalInt("WEBHOOK_DELIVERY_PRUNE_BATCH_SIZE", 500),
+      batchSize: optionalInt("WEBHOOK_DELIVERY_PRUNE_BATCH_SIZE", 500, 1),
       /** How often the pruner wakes up. */
       intervalMinutes: optionalInt(
         "WEBHOOK_DELIVERY_PRUNE_INTERVAL_MINUTES",
         60,
+        1,
       ),
     },
   },
