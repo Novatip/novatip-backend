@@ -1,7 +1,12 @@
+process.env["DATABASE_URL"] ??= "postgresql://user:pass@localhost:5432/test";
+process.env["JWT_SECRET"] ??= "test-secret-at-least-32-chars-long-123456";
+process.env["TIP_SPLITTER_CONTRACT_ID"] ??= `C${"A".repeat(55)}`;
+
 import Fastify from "fastify";
 import { Prisma } from "@prisma/client";
 import { openApiSpecification } from "../openapi.js";
 import { openApiRoutes } from "../modules/openapi/openapi.routes.js";
+import { VerifyBody } from "../modules/auth/auth.routes.js";
 
 describe("OpenAPI route", () => {
   it("serves the documented API specification as JSON", async () => {
@@ -173,6 +178,24 @@ describe("OpenAPI route", () => {
     });
     expect(Object.keys(operation?.responses ?? {})).toEqual(
       expect.arrayContaining(["200", "400", "401", "404"]),
+    );
+  });
+
+  it("documents auth challenge and verify schemas matching auth route schemas", () => {
+    const challengeResponse =
+      openApiSpecification.components.schemas.ChallengeResponse;
+    const verifyRequest =
+      openApiSpecification.components.schemas.VerifyRequest;
+
+    expect(challengeResponse.properties).toHaveProperty("message");
+    expect(challengeResponse.properties.message).toEqual({ type: "string" });
+    expect(challengeResponse.required).toContain("message");
+    expect(challengeResponse.required).toContain("nonce");
+
+    expect(verifyRequest.properties).toHaveProperty("message");
+    expect(verifyRequest.properties.message).toEqual({ type: "string" });
+    expect(verifyRequest.required).toEqual(
+      expect.arrayContaining(Object.keys(VerifyBody.shape)),
     );
   });
 });

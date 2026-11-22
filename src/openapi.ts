@@ -215,7 +215,10 @@ export const openApiSpecification = {
     "/auth/challenge": {
       post: operation({
         summary: "Issue a one-time sign-in challenge",
-        success: json("The generated nonce.", schema("ChallengeResponse")),
+        success: json(
+          "The generated challenge containing message and nonce.",
+          schema("ChallengeResponse"),
+        ),
         requestBody: requestBody(schema("ChallengeRequest")),
         extraResponses: {
           "400": validationError,
@@ -822,16 +825,20 @@ export const openApiSpecification = {
       },
       ChallengeResponse: {
         type: "object",
-        properties: { nonce: { type: "string" } },
-        required: ["nonce"],
+        properties: {
+          message: { type: "string" },
+          nonce: { type: "string" },
+        },
+        required: ["message", "nonce"],
       },
       VerifyRequest: {
         type: "object",
         properties: {
           walletAddress: { type: "string", minLength: 56, maxLength: 56 },
+          message: { type: "string" },
           signatureHex: { type: "string", minLength: 128, maxLength: 128 },
         },
-        required: ["walletAddress", "signatureHex"],
+        required: ["walletAddress", "message", "signatureHex"],
       },
       VerifyResponse: {
         type: "object",
