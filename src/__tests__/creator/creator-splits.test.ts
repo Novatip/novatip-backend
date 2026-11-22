@@ -1,4 +1,7 @@
-import { CreatorSplitsSchema } from "../../modules/creator/creator-splits.schema.js";
+import {
+  CreatorSplitsSchema,
+  MAX_CREATOR_SPLITS,
+} from "../../modules/creator/creator-splits.schema.js";
 
 const RECIPIENT = `G${"A".repeat(55)}`;
 const SECOND_RECIPIENT = `G${"B".repeat(55)}`;
@@ -46,5 +49,22 @@ describe("CreatorSplitsSchema", () => {
 
   it("accepts an empty list for the optional claim split field", () => {
     expect(CreatorSplitsSchema.safeParse([]).success).toBe(true);
+  });
+
+  it("rejects splits arrays exceeding the maximum allowed count", () => {
+    const tooManySplits = Array.from(
+      { length: MAX_CREATOR_SPLITS + 1 },
+      (_, i) => ({
+        to: `G${String.fromCharCode(65 + Math.floor(i / 26))}${String.fromCharCode(65 + (i % 26))}${"A".repeat(53)}`,
+        bps: 1,
+      }),
+    );
+    const result = CreatorSplitsSchema.safeParse(tooManySplits);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0]?.message).toMatch(
+        new RegExp(`more than ${MAX_CREATOR_SPLITS} splits`),
+      );
+    }
   });
 });

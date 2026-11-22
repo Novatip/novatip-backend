@@ -282,34 +282,49 @@ export async function claimSlug(input: ClaimSlugInput) {
 
   let creator;
   try {
-    creator = await db.creator.update({
-      where: { id: input.creatorId },
-      data: {
-        slug: input.slug,
-        jarId,
-        splits: input.splits ?? [],
-        ...(input.displayName !== undefined && {
-          displayName: input.displayName,
-        }),
-        ...(input.bio !== undefined && { bio: input.bio }),
-      },
+    creator = await db.$transaction(async (tx) => {
+      const updatedCreator = await tx.creator.update({
+        where: { id: input.creatorId },
+        data: {
+          slug: input.slug,
+          jarId,
+          splits: input.splits ?? [],
+          ...(input.displayName !== undefined && {
+            displayName: input.displayName,
+          }),
+          ...(input.bio !== undefined && { bio: input.bio }),
+        },
+      });
+
+      await tx.tip.updateMany({
+        where: {
+          jarId,
+          creatorId: null,
+        },
+        data: {
+          creatorId: updatedCreator.id,
+        },
+      });
+
+      if (current && current.slug !== input.slug) {
+        await tx.releasedSlug.upsert({
+          where: { slug: current.slug },
+          create: {
+            slug: current.slug,
+            previousOwnerId: input.creatorId,
+            releasedAt: new Date(),
+          },
+          update: {
+            previousOwnerId: input.creatorId,
+            releasedAt: new Date(),
+          },
+        });
+      }
+
+      return updatedCreator;
     });
   } catch (err) {
     throw toClaimConflict(toCreatorNotFound(err));
-  }
-
-  await db.tip.updateMany({
-    where: {
-      jarId,
-      creatorId: null,
-    },
-    data: {
-      creatorId: creator.id,
-    },
-  });
-
-  if (current && current.slug !== input.slug) {
-    await recordSlugRelease(current.slug, input.creatorId);
   }
 
   await cacheInvalidate(`creator:${input.slug}`);
@@ -376,20 +391,35 @@ export async function renameSlug(input: RenameSlugInput) {
 
   let creator;
   try {
-    creator = await db.creator.update({
-      where: { id: input.creatorId },
-      data: {
-        slug: input.slug,
-      },
+    creator = await db.$transaction(async (tx) => {
+      const updatedCreator = await tx.creator.update({
+        where: { id: input.creatorId },
+        data: {
+          slug: input.slug,
+        },
+      });
+
+      // The slug just left behind is the one the hold protects. Recorded in
+      // the same transaction so a rename that never landed doesn't hold anything.
+      if (input.slug !== oldSlug) {
+        await tx.releasedSlug.upsert({
+          where: { slug: oldSlug },
+          create: {
+            slug: oldSlug,
+            previousOwnerId: input.creatorId,
+            releasedAt: new Date(),
+          },
+          update: {
+            previousOwnerId: input.creatorId,
+            releasedAt: new Date(),
+          },
+        });
+      }
+
+      return updatedCreator;
     });
   } catch (err) {
     throw toClaimConflict(err);
-  }
-
-  // The slug just left behind is the one the hold protects. Recorded after
-  // the write so a rename that never landed doesn't hold anything.
-  if (input.slug !== oldSlug) {
-    await recordSlugRelease(oldSlug, input.creatorId);
   }
 
   await cacheInvalidate(`creator:${oldSlug}`);
@@ -403,8 +433,9 @@ export async function renameSlug(input: RenameSlugInput) {
 /**
  * Remove a creator profile and its private account-owned records while keeping
  * indexed tips as unattributed financial history. The schema sets tip creator
- * references to null when the creator is deleted; webhook delivery records and
- * notifications are explicitly deleted before their parent records.
+ * references to null and cascades notification deletion when the creator is
+ * deleted; webhook delivery records are explicitly deleted before their parent
+ * webhooks.
  */
 export async function deleteCreator(creatorId: string): Promise<void> {
   const slug = await db.$transaction(async (tx) => {
@@ -415,8 +446,6 @@ export async function deleteCreator(creatorId: string): Promise<void> {
     if (!creator) {
       throw Object.assign(new Error("Creator not found."), { statusCode: 404 });
     }
-
-    await tx.notification.deleteMany({ where: { creatorId } });
 
     const webhooks = await tx.webhook.findMany({
       where: { creatorId },
