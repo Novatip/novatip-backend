@@ -143,7 +143,7 @@ WEBHOOK_ENCRYPTION_KEY (required in production) - 32-byte AES-256-GCM key as 64 
 WEBHOOK_ALLOW_PRIVATE_HOSTS - Allow webhook URLs to target private IP addresses (default: false; local development only)
 PORT - Server port (default: 3001)
 HOST - Server bind address (default: 0.0.0.0)
-NODE_ENV - development | production (default: development)
+NODE_ENV - development | production | test (default: development)
 REDIS_URL - Redis URL (default: redis://localhost:6379)
 REDIS_MAX_RETRIES_PER_REQUEST - Maximum times a Redis command is retried on disconnect before failing (default: 3)
 REDIS_ENABLE_READY_CHECK - Whether ready check is performed on Redis connection (default: true)

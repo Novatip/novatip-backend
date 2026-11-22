@@ -22,6 +22,8 @@ const envKeys = [
   "REDIS_ENABLE_READY_CHECK",
   "METRICS_ENABLED",
   "METRICS_TOKEN",
+  "NODE_ENV",
+  "WEBHOOK_ENCRYPTION_KEY",
 ] as const;
 const originalEnv = Object.fromEntries(
   envKeys.map((key) => [key, process.env[key]]),
@@ -59,6 +61,8 @@ beforeEach(() => {
   delete process.env["REDIS_ENABLE_READY_CHECK"];
   delete process.env["METRICS_ENABLED"];
   delete process.env["METRICS_TOKEN"];
+  delete process.env["NODE_ENV"];
+  delete process.env["WEBHOOK_ENCRYPTION_KEY"];
 });
 
 afterEach(() => {
@@ -323,4 +327,41 @@ describe("config.metrics", () => {
     );
   });
 });
+
+describe("config.nodeEnv", () => {
+  it("defaults NODE_ENV to development", async () => {
+    await expect(loadConfig()).resolves.toMatchObject({
+      nodeEnv: "development",
+    });
+  });
+
+  it("accepts valid NODE_ENV: development and test", async () => {
+    process.env["NODE_ENV"] = "test";
+    await expect(loadConfig()).resolves.toMatchObject({ nodeEnv: "test" });
+
+    process.env["NODE_ENV"] = "development";
+    await expect(loadConfig()).resolves.toMatchObject({ nodeEnv: "development" });
+  });
+
+  it("accepts valid NODE_ENV: production when WEBHOOK_ENCRYPTION_KEY is present", async () => {
+    process.env["NODE_ENV"] = "production";
+    process.env["WEBHOOK_ENCRYPTION_KEY"] = "a".repeat(64);
+
+    await expect(loadConfig()).resolves.toMatchObject({
+      nodeEnv: "production",
+    });
+  });
+
+  it.each(["Production", "prod", "PRODUCTION", "staging", "invalid"])(
+    "fails fast on invalid NODE_ENV: %s",
+    async (invalidEnv) => {
+      process.env["NODE_ENV"] = invalidEnv;
+
+      await expect(loadConfig()).rejects.toThrow(
+        `Env var NODE_ENV must be one of development, production, test, got "${invalidEnv}"`,
+      );
+    },
+  );
+});
+
 

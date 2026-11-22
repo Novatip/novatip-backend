@@ -36,6 +36,13 @@ function optionalInt(key: string, fallback: number, min?: number): number {
   return parsed;
 }
 
+const NODE_ENVS = ["development", "production", "test"] as const;
+type NodeEnv = (typeof NODE_ENVS)[number];
+
+function isNodeEnv(value: string): value is NodeEnv {
+  return (NODE_ENVS as readonly string[]).includes(value);
+}
+
 const STELLAR_NETWORKS = ["testnet", "mainnet", "local"] as const;
 type StellarNetwork = (typeof STELLAR_NETWORKS)[number];
 
@@ -112,6 +119,11 @@ function optionalBoolean(key: string, fallback: boolean): boolean {
 const appBaseUrl = optional("APP_BASE_URL", "http://localhost:3000");
 const apiBaseUrl = optional("API_BASE_URL", "http://localhost:3001");
 const nodeEnv = optional("NODE_ENV", "development");
+if (!isNodeEnv(nodeEnv)) {
+  throw new Error(
+    `Env var NODE_ENV must be one of ${NODE_ENVS.join(", ")}, got "${nodeEnv}"`,
+  );
+}
 const webhookEncryptionKey = optional("WEBHOOK_ENCRYPTION_KEY", "");
 
 if (
