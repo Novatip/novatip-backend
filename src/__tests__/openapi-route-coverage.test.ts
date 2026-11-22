@@ -91,4 +91,13 @@ describe("OpenAPI route coverage", () => {
       expect(alias).not.toBe(target);
     }
   });
+
+  it("every path in documentedRouteAliases is actually a registered, reachable route", async () => {
+    const routes = await collectRoutes();
+    const registeredPaths = new Set(routes.map(({ path }) => path));
+
+    for (const alias of Object.keys(documentedRouteAliases)) {
+      expect(registeredPaths.has(alias)).toBe(true);
+    }
+  });
 });
