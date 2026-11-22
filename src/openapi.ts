@@ -573,6 +573,13 @@ export const openApiSpecification = {
             default: 20,
           }),
           paginationParameters[1]!,
+          queryParameter("unread", "Filter to unread notifications only.", {
+            type: "boolean",
+          }),
+          queryParameter("cursor", "Opaque cursor for pagination.", {
+            type: "string",
+            minLength: 1,
+          }),
         ],
         secured: true,
         extraResponses: { "400": validationError },
@@ -1384,6 +1391,8 @@ export const openApiSpecification = {
           },
           sent: { type: "boolean" },
           sentAt: { type: "string", format: "date-time", nullable: true },
+          read: { type: "boolean" },
+          readAt: { type: "string", format: "date-time", nullable: true },
           createdAt: { type: "string", format: "date-time" },
         },
         required: [
@@ -1392,6 +1401,8 @@ export const openApiSpecification = {
           "payload",
           "sent",
           "sentAt",
+          "read",
+          "readAt",
           "createdAt",
         ],
       },
@@ -1399,8 +1410,10 @@ export const openApiSpecification = {
         type: "object",
         properties: {
           notifications: { type: "array", items: schema("Notification") },
+          unreadCount: { type: "integer" },
+          nextCursor: { type: "string", nullable: true },
         },
-        required: ["notifications"],
+        required: ["notifications", "unreadCount", "nextCursor"],
       },
       NotificationPreferences: {
         type: "object",
