@@ -25,6 +25,9 @@ import { jarIdForSlug } from "../creator/jar-id.js";
 /** Maximum attempts to generate an uncollided temporary slug/jarId for new creators. */
 export const MAX_CREATOR_CREATE_ATTEMPTS = 5;
 
+/** Strict UTC ISO-8601 format produced by Date.prototype.toISOString(). */
+const ISO_8601_UTC_REGEX = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
 // ── Challenge ─────────────────────────────────────────────────────────────────
 
 export interface ChallengeMessage {
@@ -114,15 +117,39 @@ export async function verifyChallenge(
     );
   }
 
-  const expiresMatch = signedMessage.match(/Expires At: (.+)/);
-  if (expiresMatch) {
-    const expiresAt = new Date(expiresMatch[1]);
-    if (Date.now() > expiresAt.getTime()) {
-      throw Object.assign(
-        new Error("Challenge message has expired."),
-        { statusCode: 401 },
-      );
-    }
+  const expiresLines = signedMessage
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("Expires At:"));
+  if (expiresLines.length !== 1) {
+    throw Object.assign(
+      new Error("Challenge message has an invalid expiry."),
+      { statusCode: 401 },
+    );
+  }
+  const expiresLine = expiresLines[0]!;
+  if (!expiresLine.startsWith("Expires At: ")) {
+    throw Object.assign(
+      new Error("Challenge message has an invalid expiry."),
+      { statusCode: 401 },
+    );
+  }
+  const expiresRaw = expiresLine.slice("Expires At: ".length);
+  const expiresAtMs = ISO_8601_UTC_REGEX.test(expiresRaw)
+    ? Date.parse(expiresRaw)
+    : Number.NaN;
+  if (
+    !Number.isFinite(expiresAtMs) ||
+    new Date(expiresAtMs).toISOString() !== expiresRaw
+  ) {
+    throw Object.assign(
+      new Error("Challenge message has an invalid expiry."),
+      { statusCode: 401 },
+    );
+  }
+  if (Date.now() > expiresAtMs) {
+    throw Object.assign(new Error("Challenge message has expired."), {
+      statusCode: 401 },
+    );
   }
 
   const publicKey = StrKey.decodeEd25519PublicKey(walletAddress);
