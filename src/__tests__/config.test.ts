@@ -18,6 +18,8 @@ const envKeys = [
   "WEBHOOK_DELIVERY_PRUNE_INTERVAL_MINUTES",
   "WEBHOOK_DELIVERY_RETENTION_DAYS",
   "WEBHOOK_DELIVERY_FAILURE_RETENTION_DAYS",
+  "REDIS_MAX_RETRIES_PER_REQUEST",
+  "REDIS_ENABLE_READY_CHECK",
 ] as const;
 const originalEnv = Object.fromEntries(
   envKeys.map((key) => [key, process.env[key]]),
@@ -51,6 +53,8 @@ beforeEach(() => {
   delete process.env["WEBHOOK_DELIVERY_PRUNE_INTERVAL_MINUTES"];
   delete process.env["WEBHOOK_DELIVERY_RETENTION_DAYS"];
   delete process.env["WEBHOOK_DELIVERY_FAILURE_RETENTION_DAYS"];
+  delete process.env["REDIS_MAX_RETRIES_PER_REQUEST"];
+  delete process.env["REDIS_ENABLE_READY_CHECK"];
 });
 
 afterEach(() => {
@@ -236,6 +240,45 @@ describe("config.webhooks", () => {
 
     await expect(loadConfig()).rejects.toThrow(
       "Env var WEBHOOK_DELIVERY_PRUNE_BATCH_SIZE must be >= 1",
+    );
+  });
+});
+
+describe("config.redis", () => {
+  it("defaults maxRetriesPerRequest to 3 and enableReadyCheck to true", async () => {
+    await expect(loadConfig()).resolves.toMatchObject({
+      redis: {
+        maxRetriesPerRequest: 3,
+        enableReadyCheck: true,
+      },
+    });
+  });
+
+  it("loads configured maxRetriesPerRequest and enableReadyCheck", async () => {
+    process.env["REDIS_MAX_RETRIES_PER_REQUEST"] = "5";
+    process.env["REDIS_ENABLE_READY_CHECK"] = "false";
+
+    await expect(loadConfig()).resolves.toMatchObject({
+      redis: {
+        maxRetriesPerRequest: 5,
+        enableReadyCheck: false,
+      },
+    });
+  });
+
+  it("rejects negative maxRetriesPerRequest", async () => {
+    process.env["REDIS_MAX_RETRIES_PER_REQUEST"] = "-1";
+
+    await expect(loadConfig()).rejects.toThrow(
+      "Env var REDIS_MAX_RETRIES_PER_REQUEST must be >= 0",
+    );
+  });
+
+  it("rejects non-boolean enableReadyCheck", async () => {
+    process.env["REDIS_ENABLE_READY_CHECK"] = "maybe";
+
+    await expect(loadConfig()).rejects.toThrow(
+      'Env var REDIS_ENABLE_READY_CHECK must be "true" or "false"',
     );
   });
 });

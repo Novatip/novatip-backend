@@ -171,6 +171,11 @@ export const config = {
 
   databaseUrl: require("DATABASE_URL"),
   redisUrl: optional("REDIS_URL", "redis://localhost:6379"),
+  redis: {
+    url: optional("REDIS_URL", "redis://localhost:6379"),
+    maxRetriesPerRequest: optionalInt("REDIS_MAX_RETRIES_PER_REQUEST", 3, 0),
+    enableReadyCheck: optionalBoolean("REDIS_ENABLE_READY_CHECK", true),
+  },
 
   jwtSecret: jwtSecretValue,
   jwtExpiresIn,
