@@ -143,14 +143,14 @@ WEBHOOK_ENCRYPTION_KEY (required in production) - 32-byte AES-256-GCM key as 64 
 WEBHOOK_ALLOW_PRIVATE_HOSTS - Allow webhook URLs to target private IP addresses (default: false; local development only)
 PORT - Server port (default: 3001)
 HOST - Server bind address (default: 0.0.0.0)
-NODE_ENV - development | production (default: development)
+NODE_ENV - development | production | test (default: development)
 REDIS_URL - Redis URL (default: redis://localhost:6379)
 REDIS_MAX_RETRIES_PER_REQUEST - Maximum times a Redis command is retried on disconnect before failing (default: 3)
 REDIS_ENABLE_READY_CHECK - Whether ready check is performed on Redis connection (default: true)
 STELLAR_NETWORK - testnet | mainnet | local (default: testnet)
-SOROBAN_RPC_URL - Soroban RPC endpoint (default: https://soroban-testnet.stellar.org)
-HORIZON_URL - Horizon REST endpoint (default: https://horizon-testnet.stellar.org)
-NETWORK_PASSPHRASE - Stellar network passphrase (default: "Test SDF Network ; September 2015")
+SOROBAN_RPC_URL (required on mainnet) - Soroban RPC endpoint (default on testnet/local: https://soroban-testnet.stellar.org)
+HORIZON_URL (required on mainnet) - Horizon REST endpoint (default on testnet/local: https://horizon-testnet.stellar.org)
+NETWORK_PASSPHRASE (required on mainnet) - Stellar network passphrase (default on testnet/local: "Test SDF Network ; September 2015")
 USDC_CONTRACT_ID (required on mainnet) - USDC Stellar Asset Contract ID (default on testnet/local: CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA, the testnet one)
 INDEXER_START_LEDGER - Ledger to begin indexing from (default: 0)
 INDEXER_RPC_TIMEOUT_MS - Timeout for indexer RPC calls in milliseconds (default: 5000)
@@ -186,7 +186,7 @@ APP_BASE_URL - Frontend base URL (default: http://localhost:3000)
 API_BASE_URL - Public backend base URL for email confirmation links (default: http://localhost:3001)
 CORS_ALLOWED_ORIGINS - Comma-separated origins allowed through CORS in production (default: just APP_BASE_URL; ignored outside production, where any origin is allowed)
 METRICS_ENABLED - Enable Prometheus metrics endpoint at /metrics (default: false)
-METRICS_TOKEN - Bearer token for /metrics authentication; if empty, the endpoint should bind to an internal address only (default: "")
+METRICS_TOKEN - Bearer token for /metrics authentication; if empty, /metrics is served unauthenticated and must be protected by external network controls (default: "")
 
 ## Metrics
 
@@ -201,8 +201,7 @@ Metrics can be protected in two ways:
    include `Authorization: Bearer <token>`. This is suitable when the metrics
    endpoint is exposed publicly or to a monitoring system.
 
-2. **Network binding** - Leave `METRICS_TOKEN` empty and bind the server to an
-   internal address accessible only to your monitoring infrastructure.
+2. **Network access control** - Leave `METRICS_TOKEN` empty only if external network controls (such as firewall rules, reverse proxy blocks, or binding `HOST` to a loopback/private interface) prevent unauthorized access to `config.port`. The server does not bind `/metrics` to a separate internal interface automatically.
 
 ### Available metrics
 
@@ -494,8 +493,14 @@ local development and should remain off in production.
 Webhook secrets are stored as AES-256-GCM ciphertext. Set
 `WEBHOOK_ENCRYPTION_KEY` to a unique 32-byte key encoded as 64 hex characters;
 the server encrypts existing plaintext webhook secrets during startup before
-accepting requests. Back up this key securely: losing or changing it makes the
-stored secrets unusable.
+accepting requests.
+
+To rotate `WEBHOOK_ENCRYPTION_KEY`:
+1. Generate a new 32-byte key: `openssl rand -hex 32`.
+2. Run the key-rotation script to re-encrypt existing stored secrets:
+   `OLD_WEBHOOK_ENCRYPTION_KEY=<old_hex> WEBHOOK_ENCRYPTION_KEY=<new_hex> npx tsx scripts/rotate-webhook-key.ts`
+   (or pass the keys as positional arguments: `npx tsx scripts/rotate-webhook-key.ts <old_hex> <new_hex>`).
+3. Update `WEBHOOK_ENCRYPTION_KEY` in your environment config and restart the service.
 
 POST /webhooks is capped at MAX_WEBHOOKS_PER_CREATOR endpoints per creator
 (default 5). Registering beyond it returns 409 with error.code
