@@ -668,6 +668,14 @@ export const openApiSpecification = {
             default: 20,
           }),
           paginationParameters[1]!,
+          queryParameter(
+            "success",
+            "Filter delivery attempts by outcome (`true` or `false`).",
+            {
+              type: "string",
+              enum: ["true", "false"],
+            },
+          ),
         ],
         secured: true,
         extraResponses: {
