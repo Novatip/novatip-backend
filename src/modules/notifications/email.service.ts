@@ -13,7 +13,7 @@ import { config } from "../../config.js";
 import { logger } from "../../utils/logger.js";
 import { escapeHtml } from "../../utils/html.js";
 
-const emailLogger = logger.child({ component: "notifications" });
+const emailLogger = logger.child({ component: "notifications:email" });
 const HOUR_MS = 60 * 60 * 1000;
 const DIGEST_POLL_INTERVAL_MS = 60_000;
 

@@ -19,11 +19,68 @@ import { createHash, randomBytes } from "crypto";
 import { StrKey } from "@stellar/stellar-sdk";
 import { setAuthNonce, consumeAuthNonce } from "../../redis.js";
 import { db } from "../../db.js";
+import { config } from "../../config.js";
 import { isValidAccountId } from "@novatip/sdk";
 import { jarIdForSlug } from "../creator/jar-id.js";
 
 /** Maximum attempts to generate an uncollided temporary slug/jarId for new creators. */
 export const MAX_CREATOR_CREATE_ATTEMPTS = 5;
+
+/** Strict UTC ISO-8601 format produced by Date.prototype.toISOString(). */
+const ISO_8601_UTC_REGEX = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+/** First-line format produced by generateChallenge, rejecting spaces, slashes, and userinfo. */
+const CHALLENGE_DOMAIN_LINE_REGEX =
+  /^([^\s/@]+) wants you to sign in with your Stellar account:$/;
+
+/**
+ * Stable error codes emitted by the authentication service:
+ * - INVALID_ACCOUNT (400): walletAddress is not a valid Stellar G... account ID
+ * - CHALLENGE_NOT_FOUND (401): no active nonce in Redis for this wallet
+ * - DOMAIN_MISMATCH (401): challenge first line does not match configured domain
+ * - NONCE_MISSING (401): signed message does not contain the expected nonce
+ * - INVALID_EXPIRY (401): Expires At line is missing, repeated, or malformed
+ * - CHALLENGE_EXPIRED (401): challenge timestamp is in the past
+ * - SIGNATURE_INVALID (401): Ed25519 signature verification failed
+ * - AUTH_DOMAIN_NOT_CONFIGURED (500): APP_BASE_URL is missing or invalid
+ */
+export type AuthErrorCode =
+  | "INVALID_ACCOUNT"
+  | "CHALLENGE_NOT_FOUND"
+  | "DOMAIN_MISMATCH"
+  | "NONCE_MISSING"
+  | "INVALID_EXPIRY"
+  | "CHALLENGE_EXPIRED"
+  | "SIGNATURE_INVALID"
+  | "AUTH_DOMAIN_NOT_CONFIGURED";
+
+function authError(
+  statusCode: number,
+  code: AuthErrorCode,
+  message: string,
+): Error & { statusCode: number; code: AuthErrorCode } {
+  return Object.assign(new Error(message), { statusCode, code });
+}
+
+/**
+ * Derive the expected challenge domain (host[:port], lowercased) from config.appBaseUrl.
+ * Fails safe with a 500 error if APP_BASE_URL is missing or invalid.
+ */
+export function getExpectedAuthDomain(): string {
+  try {
+    const url = new URL(config.appBaseUrl);
+    if (!url.host) {
+      throw new Error("Empty host");
+    }
+    return url.host.toLowerCase();
+  } catch {
+    throw authError(
+      500,
+      "AUTH_DOMAIN_NOT_CONFIGURED",
+      "Server authentication domain is not configured.",
+    );
+  }
+}
 
 // ── Challenge ─────────────────────────────────────────────────────────────────
 
@@ -38,12 +95,10 @@ export interface ChallengeMessage {
  */
 export async function generateChallenge(
   walletAddress: string,
-  domain: string,
+  domain: string = getExpectedAuthDomain(),
 ): Promise<ChallengeMessage> {
   if (!isValidAccountId(walletAddress)) {
-    throw Object.assign(new Error("Invalid Stellar account address."), {
-      statusCode: 400,
-    });
+    throw authError(400, "INVALID_ACCOUNT", "Invalid Stellar account address.");
   }
 
   const nonce = randomBytes(32).toString("hex");
@@ -94,44 +149,81 @@ export async function verifyChallenge(
   signJwt: (payload: SessionClaims) => string,
 ): Promise<VerifyResult> {
   if (!isValidAccountId(walletAddress)) {
-    throw Object.assign(new Error("Invalid Stellar account address."), {
-      statusCode: 400,
-    });
+    throw authError(400, "INVALID_ACCOUNT", "Invalid Stellar account address.");
   }
 
   const nonce = await consumeAuthNonce(walletAddress);
   if (!nonce) {
-    throw Object.assign(
-      new Error("Challenge not found or expired. Request a new challenge."),
-      { statusCode: 401 },
+    throw authError(
+      401,
+      "CHALLENGE_NOT_FOUND",
+      "Challenge not found or expired. Request a new challenge.",
+    );
+  }
+
+  const expectedDomain = getExpectedAuthDomain();
+  const firstLine = signedMessage.split(/\r?\n/, 1)[0] ?? "";
+  const domainMatch = CHALLENGE_DOMAIN_LINE_REGEX.exec(firstLine);
+  if (!domainMatch || domainMatch[1]!.toLowerCase() !== expectedDomain) {
+    throw authError(
+      401,
+      "DOMAIN_MISMATCH",
+      "Message domain does not match this server.",
     );
   }
 
   if (!signedMessage.includes(`Nonce: ${nonce}`)) {
-    throw Object.assign(
-      new Error("Message does not contain expected nonce."),
-      { statusCode: 401 },
+    throw authError(
+      401,
+      "NONCE_MISSING",
+      "Message does not contain expected nonce.",
     );
   }
 
-  const expiresMatch = signedMessage.match(/Expires At: (.+)/);
-  if (expiresMatch) {
-    const expiresAt = new Date(expiresMatch[1]);
-    if (Date.now() > expiresAt.getTime()) {
-      throw Object.assign(
-        new Error("Challenge message has expired."),
-        { statusCode: 401 },
-      );
-    }
+  const expiresLines = signedMessage
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("Expires At:"));
+  if (expiresLines.length !== 1) {
+    throw authError(
+      401,
+      "INVALID_EXPIRY",
+      "Challenge message has an invalid expiry.",
+    );
+  }
+  const expiresLine = expiresLines[0]!;
+  if (!expiresLine.startsWith("Expires At: ")) {
+    throw authError(
+      401,
+      "INVALID_EXPIRY",
+      "Challenge message has an invalid expiry.",
+    );
+  }
+  const expiresRaw = expiresLine.slice("Expires At: ".length);
+  const expiresAtMs = ISO_8601_UTC_REGEX.test(expiresRaw)
+    ? Date.parse(expiresRaw)
+    : Number.NaN;
+  if (
+    !Number.isFinite(expiresAtMs) ||
+    new Date(expiresAtMs).toISOString() !== expiresRaw
+  ) {
+    throw authError(
+      401,
+      "INVALID_EXPIRY",
+      "Challenge message has an invalid expiry.",
+    );
+  }
+  if (Date.now() > expiresAtMs) {
+    throw authError(401, "CHALLENGE_EXPIRED", "Challenge message has expired.");
   }
 
   const publicKey = StrKey.decodeEd25519PublicKey(walletAddress);
 
   const valid = verifyEd25519(signedMessage, signatureHex, publicKey);
   if (!valid) {
-    throw Object.assign(
-      new Error("Signature verification failed. Request a new challenge."),
-      { statusCode: 401 },
+    throw authError(
+      401,
+      "SIGNATURE_INVALID",
+      "Signature verification failed. Request a new challenge.",
     );
   }
 
