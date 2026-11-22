@@ -14,6 +14,10 @@ const envKeys = [
   "MAX_BODY_SIZE",
   "WEBHOOK_MAX_PAYLOAD_SIZE",
   "MAX_PAYLOAD_SIZE",
+  "WEBHOOK_DELIVERY_PRUNE_BATCH_SIZE",
+  "WEBHOOK_DELIVERY_PRUNE_INTERVAL_MINUTES",
+  "WEBHOOK_DELIVERY_RETENTION_DAYS",
+  "WEBHOOK_DELIVERY_FAILURE_RETENTION_DAYS",
 ] as const;
 const originalEnv = Object.fromEntries(
   envKeys.map((key) => [key, process.env[key]]),
@@ -43,6 +47,10 @@ beforeEach(() => {
   delete process.env["MAX_BODY_SIZE"];
   delete process.env["WEBHOOK_MAX_PAYLOAD_SIZE"];
   delete process.env["MAX_PAYLOAD_SIZE"];
+  delete process.env["WEBHOOK_DELIVERY_PRUNE_BATCH_SIZE"];
+  delete process.env["WEBHOOK_DELIVERY_PRUNE_INTERVAL_MINUTES"];
+  delete process.env["WEBHOOK_DELIVERY_RETENTION_DAYS"];
+  delete process.env["WEBHOOK_DELIVERY_FAILURE_RETENTION_DAYS"];
 });
 
 afterEach(() => {
@@ -201,8 +209,33 @@ describe("config.webhooks", () => {
         maxBodySize: 1_024,
         maxPayloadSize: 2_048,
         deliveryConcurrency: 10,
+        retention: {
+          successDays: 30,
+          failureDays: 90,
+          batchSize: 500,
+          intervalMinutes: 60,
+        },
       },
     });
     expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it.each([0, -1])(
+    "rejects non-positive intervalMinutes (%s)",
+    async (interval) => {
+      process.env["WEBHOOK_DELIVERY_PRUNE_INTERVAL_MINUTES"] = String(interval);
+
+      await expect(loadConfig()).rejects.toThrow(
+        "Env var WEBHOOK_DELIVERY_PRUNE_INTERVAL_MINUTES must be >= 1",
+      );
+    },
+  );
+
+  it.each([0, -1])("rejects non-positive batchSize (%s)", async (batchSize) => {
+    process.env["WEBHOOK_DELIVERY_PRUNE_BATCH_SIZE"] = String(batchSize);
+
+    await expect(loadConfig()).rejects.toThrow(
+      "Env var WEBHOOK_DELIVERY_PRUNE_BATCH_SIZE must be >= 1",
+    );
   });
 });
