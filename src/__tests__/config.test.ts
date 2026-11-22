@@ -305,6 +305,16 @@ describe("config.metrics", () => {
     });
   });
 
+  it("covers the metrics enabled with no token case", async () => {
+    process.env["METRICS_ENABLED"] = "true";
+    delete process.env["METRICS_TOKEN"];
+
+    await expect(loadConfig()).resolves.toMatchObject({
+      metricsEnabled: true,
+      metricsToken: "",
+    });
+  });
+
   it("rejects non-boolean METRICS_ENABLED", async () => {
     process.env["METRICS_ENABLED"] = "not-a-boolean";
 

@@ -470,8 +470,10 @@ export const config = {
   },
 
   /**
-   * Bearer token GET /metrics requires. Empty means no token is checked, so
-   * the server should then be bound to an address only the scraper reaches.
+   * Bearer token GET /metrics requires. When empty, /metrics is served without
+   * authentication — the server does not bind /metrics to an internal interface
+   * automatically, so operators must enforce external network-level access controls
+   * (e.g. firewall, reverse proxy, or loopback host binding).
    */
   get metricsToken(): string {
     return optional("METRICS_TOKEN", "");

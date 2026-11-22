@@ -13,8 +13,11 @@ export async function metricsRoutes(app: FastifyInstance): Promise<void> {
     const token = config.metricsToken;
     
     if (!token) {
-      // Metrics enabled but no token means bind to internal address only
-      // This is handled at the server level, so if we reach here, allow it
+      // When METRICS_TOKEN is not set, /metrics is served without authentication.
+      // Callers/operators must ensure network-level isolation (e.g. firewall rules,
+      // reverse proxy blocking /metrics, or binding HOST to a loopback/private interface)
+      // because the Fastify server binds to config.host (defaulting to 0.0.0.0) without
+      // a separate internal listener or metrics-specific bind.
       return;
     }
 

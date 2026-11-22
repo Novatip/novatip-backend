@@ -185,7 +185,7 @@ APP_BASE_URL - Frontend base URL (default: http://localhost:3000)
 API_BASE_URL - Public backend base URL for email confirmation links (default: http://localhost:3001)
 CORS_ALLOWED_ORIGINS - Comma-separated origins allowed through CORS in production (default: just APP_BASE_URL; ignored outside production, where any origin is allowed)
 METRICS_ENABLED - Enable Prometheus metrics endpoint at /metrics (default: false)
-METRICS_TOKEN - Bearer token for /metrics authentication; if empty, the endpoint should bind to an internal address only (default: "")
+METRICS_TOKEN - Bearer token for /metrics authentication; if empty, /metrics is served unauthenticated and must be protected by external network controls (default: "")
 
 ## Metrics
 
@@ -200,8 +200,7 @@ Metrics can be protected in two ways:
    include `Authorization: Bearer <token>`. This is suitable when the metrics
    endpoint is exposed publicly or to a monitoring system.
 
-2. **Network binding** - Leave `METRICS_TOKEN` empty and bind the server to an
-   internal address accessible only to your monitoring infrastructure.
+2. **Network access control** - Leave `METRICS_TOKEN` empty only if external network controls (such as firewall rules, reverse proxy blocks, or binding `HOST` to a loopback/private interface) prevent unauthorized access to `config.port`. The server does not bind `/metrics` to a separate internal interface automatically.
 
 ### Available metrics
 
