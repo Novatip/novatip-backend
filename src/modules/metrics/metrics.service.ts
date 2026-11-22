@@ -36,6 +36,12 @@ export const webhookDeliveriesCounter = new Counter({
   registers: [register],
 });
 
+export const webhookDecryptErrorsCounter = new Counter({
+  name: 'novatip_webhook_decrypt_errors_total',
+  help: 'Total webhook secret decryption failures',
+  registers: [register],
+});
+
 export const webhookDeliveryDuration = new Histogram({
   name: 'novatip_webhook_delivery_duration_seconds',
   help: 'Webhook delivery duration in seconds',
@@ -78,6 +84,10 @@ export function recordSuccessfulPoll(): void {
 
 export function recordWebhookDelivery(outcome: 'success' | 'failure'): void {
   webhookDeliveriesCounter.inc({ outcome });
+}
+
+export function recordWebhookDecryptError(): void {
+  webhookDecryptErrorsCounter.inc();
 }
 
 export function recordWebhookDuration(durationSeconds: number): void {

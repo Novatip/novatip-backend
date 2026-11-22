@@ -470,4 +470,20 @@ describe("GET /check/:slug with a hold in place", () => {
 
     expect(res.json()).toEqual({ slug: "oldslug", available: true });
   });
+
+  test("does not grant the hold exemption for an email-verification token", async () => {
+    const token = app.jwt.sign({
+      sub: ALICE,
+      email: "alice@example.com",
+      purpose: "creator-email-verification",
+    });
+    const res = await app.inject({
+      method: "GET",
+      url: "/check/oldslug",
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ slug: "oldslug", available: false });
+  });
 });
