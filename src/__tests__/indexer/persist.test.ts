@@ -17,9 +17,17 @@ const findUniqueCreatorMock =
   jest.fn<
     (args: { where: { jarId: string } }) => Promise<{ id: string } | null>
   >();
-const upsertTipMock =
+const createManyTipMock =
   jest.fn<
-    (args: Record<string, unknown>) => Promise<Record<string, unknown>>
+    (args: Record<string, unknown>) => Promise<{ count: number }>
+  >();
+const findManyTipMock =
+  jest.fn<
+    (args: Record<string, unknown>) => Promise<Array<{ id: string }>>
+  >();
+const deleteManyTipMock =
+  jest.fn<
+    (args: Record<string, unknown>) => Promise<{ count: number }>
   >();
 const upsertCursorMock =
   jest.fn<
@@ -37,7 +45,11 @@ const loggerInfoMock = jest.fn();
 jest.unstable_mockModule("../../db.js", () => ({
   db: {
     creator: { findUnique: findUniqueCreatorMock },
-    tip: { upsert: upsertTipMock },
+    tip: {
+      createMany: createManyTipMock,
+      findMany: findManyTipMock,
+      deleteMany: deleteManyTipMock,
+    },
     indexerCursor: {
       upsert: upsertCursorMock,
       findUnique: findUniqueCursorMock,
@@ -57,8 +69,15 @@ jest.unstable_mockModule("../../utils/logger.js", () => ({
   },
 }));
 
-const { persistTip, updateCursor, readCursor, INDEXER_CURSOR_ID } =
-  await import("../../indexer/persist.js");
+const {
+  persistTip,
+  updateCursor,
+  readCursor,
+  pruneUnownedTips,
+  startUnownedTipPruner,
+  stopUnownedTipPruner,
+  INDEXER_CURSOR_ID,
+} = await import("../../indexer/persist.js");
 
 describe("indexer persist (#151 unclaimed jar persistence & #84 named cursor id)", () => {
   const sampleEvent: TipEvent = {
@@ -72,11 +91,15 @@ describe("indexer persist (#151 unclaimed jar persistence & #84 named cursor id)
   };
 
   beforeEach(() => {
+    stopUnownedTipPruner();
     jest.clearAllMocks();
-    upsertTipMock.mockResolvedValue({
-      createdAt: new Date(sampleEvent.timestamp),
-      ledgerAt: new Date(sampleEvent.timestamp),
-    });
+    createManyTipMock.mockResolvedValue({ count: 1 });
+    findManyTipMock.mockResolvedValue([]);
+    deleteManyTipMock.mockResolvedValue({ count: 0 });
+  });
+
+  afterEach(() => {
+    stopUnownedTipPruner();
   });
 
   it("exports named constant INDEXER_CURSOR_ID as 1 (#84)", () => {
@@ -110,24 +133,26 @@ describe("indexer persist (#151 unclaimed jar persistence & #84 named cursor id)
   it("logs at info level and stores tip with creatorId: null when jarId is unclaimed (#151)", async () => {
     findUniqueCreatorMock.mockResolvedValue(null);
 
-    await persistTip(sampleEvent, "0xdeadbeef");
+    const isNew = await persistTip(sampleEvent, "0xdeadbeef");
 
+    expect(isNew).toBe(true);
     expect(findUniqueCreatorMock).toHaveBeenCalledWith({
       where: { jarId: sampleEvent.jarId },
     });
-    expect(upsertTipMock).toHaveBeenCalledWith({
-      where: { txHash: "0xdeadbeef" },
-      update: {},
-      create: {
-        txHash: "0xdeadbeef",
-        ledger: sampleEvent.ledger,
-        ledgerAt: new Date(sampleEvent.timestamp),
-        fromAddress: sampleEvent.from,
-        amount: sampleEvent.amount.toString(),
-        message: sampleEvent.message,
-        jarId: sampleEvent.jarId,
-        creatorId: null,
-      },
+    expect(createManyTipMock).toHaveBeenCalledWith({
+      data: [
+        {
+          txHash: "0xdeadbeef",
+          ledger: sampleEvent.ledger,
+          ledgerAt: new Date(sampleEvent.timestamp),
+          fromAddress: sampleEvent.from,
+          amount: sampleEvent.amount.toString(),
+          message: sampleEvent.message,
+          jarId: sampleEvent.jarId,
+          creatorId: null,
+        },
+      ],
+      skipDuplicates: true,
     });
     expect(loggerInfoMock).toHaveBeenCalledWith(
       { jarId: sampleEvent.jarId },
@@ -138,25 +163,27 @@ describe("indexer persist (#151 unclaimed jar persistence & #84 named cursor id)
   it("writes a tip row when jarId belongs to a known creator (#86)", async () => {
     findUniqueCreatorMock.mockResolvedValue({ id: "creator_valid" });
 
-    await persistTip(sampleEvent, "0xfeedbeef");
+    const isNew = await persistTip(sampleEvent, "0xfeedbeef");
 
+    expect(isNew).toBe(true);
     expect(findUniqueCreatorMock).toHaveBeenCalledWith({
       where: { jarId: sampleEvent.jarId },
     });
     expect(loggerInfoMock).not.toHaveBeenCalled();
-    expect(upsertTipMock).toHaveBeenCalledWith({
-      where: { txHash: "0xfeedbeef" },
-      update: {},
-      create: {
-        txHash: "0xfeedbeef",
-        ledger: sampleEvent.ledger,
-        ledgerAt: new Date(sampleEvent.timestamp),
-        fromAddress: sampleEvent.from,
-        amount: sampleEvent.amount.toString(),
-        message: sampleEvent.message,
-        jarId: sampleEvent.jarId,
-        creatorId: "creator_valid",
-      },
+    expect(createManyTipMock).toHaveBeenCalledWith({
+      data: [
+        {
+          txHash: "0xfeedbeef",
+          ledger: sampleEvent.ledger,
+          ledgerAt: new Date(sampleEvent.timestamp),
+          fromAddress: sampleEvent.from,
+          amount: sampleEvent.amount.toString(),
+          message: sampleEvent.message,
+          jarId: sampleEvent.jarId,
+          creatorId: "creator_valid",
+        },
+      ],
+      skipDuplicates: true,
     });
   });
 
@@ -168,65 +195,131 @@ describe("indexer persist (#151 unclaimed jar persistence & #84 named cursor id)
     expect(findUniqueCreatorMock).toHaveBeenCalledWith({
       where: { jarId: sampleEvent.jarId },
     });
-    expect(upsertTipMock).toHaveBeenCalledWith({
-      where: { txHash: "0xunknownjar" },
-      update: {},
-      create: {
-        txHash: "0xunknownjar",
-        ledger: sampleEvent.ledger,
-        ledgerAt: new Date(sampleEvent.timestamp),
-        fromAddress: sampleEvent.from,
-        amount: sampleEvent.amount.toString(),
-        message: sampleEvent.message,
-        jarId: sampleEvent.jarId,
-        creatorId: null,
-      },
+    expect(createManyTipMock).toHaveBeenCalledWith({
+      data: [
+        {
+          txHash: "0xunknownjar",
+          ledger: sampleEvent.ledger,
+          ledgerAt: new Date(sampleEvent.timestamp),
+          fromAddress: sampleEvent.from,
+          amount: sampleEvent.amount.toString(),
+          message: sampleEvent.message,
+          jarId: sampleEvent.jarId,
+          creatorId: null,
+        },
+      ],
+      skipDuplicates: true,
     });
   });
 
-  it("is idempotent: processing the same txHash twice produces one row (#86)", async () => {
-    findUniqueCreatorMock.mockResolvedValue({ id: "creator_valid" });
-
+  it("is idempotent and returns true on creation, false on replay for owned and unowned jars (#86, #278)", async () => {
     const tipStore = new Map<string, Record<string, unknown>>();
-    upsertTipMock.mockImplementation(async (args: Record<string, unknown>) => {
-      const where = args["where"] as { txHash: string };
-      const create = args["create"] as Record<string, unknown>;
-      const update = args["update"] as Record<string, unknown> | undefined;
-      const txHash = where.txHash;
-      if (!tipStore.has(txHash)) {
-        tipStore.set(txHash, {
-          id: "tip_row_1",
-          createdAt: new Date(sampleEvent.timestamp),
-          ...create,
-        });
-      } else if (update && Object.keys(update).length > 0) {
-        Object.assign(tipStore.get(txHash)!, update);
+    createManyTipMock.mockImplementation(async (args: Record<string, unknown>) => {
+      const data = args["data"] as Array<Record<string, unknown>>;
+      let count = 0;
+      for (const row of data) {
+        const txHash = row["txHash"] as string;
+        if (!tipStore.has(txHash)) {
+          tipStore.set(txHash, { id: `tip_${tipStore.size + 1}`, ...row });
+          count += 1;
+        }
       }
-      return tipStore.get(txHash)!;
+      return { count };
     });
 
-    // First processing of the transaction
-    await persistTip(sampleEvent, "0xreplayedtx");
+    // Owned jar path
+    findUniqueCreatorMock.mockResolvedValue({ id: "creator_valid" });
+    expect(await persistTip(sampleEvent, "0xreplayed_owned")).toBe(true);
+    expect(tipStore.size).toBe(1);
+    expect(await persistTip(sampleEvent, "0xreplayed_owned")).toBe(false);
     expect(tipStore.size).toBe(1);
 
-    // Replay of the same transaction
-    await persistTip(sampleEvent, "0xreplayedtx");
-    expect(tipStore.size).toBe(1);
+    // Unowned jar path
+    findUniqueCreatorMock.mockResolvedValue(null);
+    expect(await persistTip(sampleEvent, "0xreplayed_unowned")).toBe(true);
+    expect(tipStore.size).toBe(2);
+    expect(await persistTip(sampleEvent, "0xreplayed_unowned")).toBe(false);
+    expect(tipStore.size).toBe(2);
+  });
 
-    expect(upsertTipMock).toHaveBeenCalledTimes(2);
-    expect(upsertTipMock).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({
-        where: { txHash: "0xreplayedtx" },
-        update: {},
-      }),
-    );
-    expect(upsertTipMock).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        where: { txHash: "0xreplayedtx" },
-        update: {},
-      }),
-    );
+  it("prunes unowned tips in bounded batches (#280)", async () => {
+    findManyTipMock
+      .mockResolvedValueOnce([{ id: "t1" }, { id: "t2" }])
+      .mockResolvedValueOnce([{ id: "t3" }]);
+    deleteManyTipMock
+      .mockResolvedValueOnce({ count: 2 })
+      .mockResolvedValueOnce({ count: 1 });
+
+    const deleted = await pruneUnownedTips(90, 2, 10);
+
+    expect(deleted).toBe(3);
+    expect(findManyTipMock).toHaveBeenCalledTimes(2);
+    expect(findManyTipMock).toHaveBeenNthCalledWith(1, {
+      where: {
+        creatorId: null,
+        ledgerAt: { lt: expect.any(Date) },
+      },
+      select: { id: true },
+      take: 2,
+    });
+    expect(deleteManyTipMock).toHaveBeenNthCalledWith(1, {
+      where: { id: { in: ["t1", "t2"] } },
+    });
+    expect(deleteManyTipMock).toHaveBeenNthCalledWith(2, {
+      where: { id: { in: ["t3"] } },
+    });
+  });
+
+  it("deletes unowned tips older than the configured window when the scheduler runs (#280)", async () => {
+    const now = Date.now();
+    const tips = [
+      {
+        id: "old_unowned",
+        creatorId: null,
+        ledgerAt: new Date(now - 91 * 86_400_000),
+      },
+      {
+        id: "fresh_unowned",
+        creatorId: null,
+        ledgerAt: new Date(now - 10 * 86_400_000),
+      },
+      {
+        id: "old_owned",
+        creatorId: "creator_1",
+        ledgerAt: new Date(now - 120 * 86_400_000),
+      },
+    ];
+
+    findManyTipMock.mockImplementation(async (args: Record<string, unknown>) => {
+      const where = args["where"] as {
+        creatorId: null;
+        ledgerAt: { lt: Date };
+      };
+      return tips
+        .filter(
+          (t) =>
+            t.creatorId === where.creatorId &&
+            t.ledgerAt.getTime() < where.ledgerAt.lt.getTime(),
+        )
+        .map((t) => ({ id: t.id }));
+    });
+    deleteManyTipMock.mockImplementation(async (args: Record<string, unknown>) => {
+      const where = args["where"] as { id: { in: string[] } };
+      const ids = new Set(where.id.in);
+      let count = 0;
+      for (let i = tips.length - 1; i >= 0; i -= 1) {
+        if (ids.has(tips[i]!.id)) {
+          tips.splice(i, 1);
+          count += 1;
+        }
+      }
+      return { count };
+    });
+
+    startUnownedTipPruner({ firstRunDelayMs: 20, intervalMs: 60_000 });
+    await new Promise((r) => setTimeout(r, 60));
+    stopUnownedTipPruner();
+
+    expect(tips.map((t) => t.id)).toEqual(["fresh_unowned", "old_owned"]);
   });
 });
