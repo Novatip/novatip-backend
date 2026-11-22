@@ -21,6 +21,13 @@ const healthLogger = logger.child({ component: "health" });
 // inside the usual orchestrator timeout window.
 const PROBE_TIMEOUT_MS = 2_000;
 
+/**
+ * Tracks at most one in-flight probe per dependency so repeated readiness
+ * checks during an outage coalesce onto the existing call instead of
+ * accumulating abandoned queries or connections.
+ */
+const inFlightProbes = new Map<string, Promise<void>>();
+
 export interface DependencyStatus {
   status: "up" | "down";
   latencyMs: number;
@@ -79,6 +86,9 @@ export async function getIndexerStatus(): Promise<IndexerStatusReport> {
 /**
  * Run a probe and record whether it succeeded and how long it took.
  * Never throws — a failed dependency is reported as `down`, not an error.
+ *
+ * Coalesces concurrent calls for the same dependency onto a single in-flight
+ * probe so a timed-out check cannot stack orphaned calls during an outage.
  */
 async function timed(
   dependency: string,
@@ -86,9 +96,21 @@ async function timed(
 ): Promise<DependencyStatus> {
   const start = Date.now();
   let timeout: ReturnType<typeof setTimeout> | undefined;
+
+  let probePromise = inFlightProbes.get(dependency);
+  if (!probePromise) {
+    probePromise = probe().finally(() => {
+      inFlightProbes.delete(dependency);
+    });
+    // Avoid unhandled rejections if the underlying probe fails after the
+    // timeout race has already returned.
+    probePromise.catch(() => undefined);
+    inFlightProbes.set(dependency, probePromise);
+  }
+
   try {
     await Promise.race([
-      probe(),
+      probePromise,
       new Promise<never>((_, reject) => {
         timeout = setTimeout(
           () =>
@@ -111,11 +133,25 @@ async function timed(
 }
 
 /**
- * Probe PostgreSQL with a trivial round-trip query.
+ * Probe PostgreSQL with a trivial round-trip query bounded by a transaction
+ * and statement-level timeout so a hung database cannot hold a pool
+ * connection indefinitely after the client-side race expires.
  */
 export async function checkDatabase(): Promise<DependencyStatus> {
   return timed("database", async () => {
-    await db.$queryRaw`SELECT 1`;
+    if (typeof db.$transaction === "function") {
+      await db.$transaction(
+        async (tx) => {
+          await tx.$executeRawUnsafe(
+            `SET LOCAL statement_timeout = ${PROBE_TIMEOUT_MS}`,
+          );
+          await tx.$queryRaw`SELECT 1`;
+        },
+        { timeout: PROBE_TIMEOUT_MS, maxWait: PROBE_TIMEOUT_MS },
+      );
+    } else {
+      await db.$queryRaw`SELECT 1`;
+    }
   });
 }
 
