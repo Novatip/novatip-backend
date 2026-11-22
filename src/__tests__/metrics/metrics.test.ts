@@ -118,5 +118,27 @@ describe('Metrics endpoint', () => {
       expect(response.headers['content-type']).toMatch(/^text\/plain/);
       expect(response.body).toContain('# HELP');
     });
+
+    it('should record unmatched routes with fixed label instead of raw url', async () => {
+      await server.inject({
+        method: 'GET',
+        url: '/nonexistent-probe-1',
+      });
+      await server.inject({
+        method: 'GET',
+        url: '/nonexistent-probe-2',
+      });
+
+      const metricsResponse = await server.inject({
+        method: 'GET',
+        url: '/metrics',
+      });
+
+      expect(metricsResponse.statusCode).toBe(200);
+      const body = metricsResponse.body;
+      expect(body).toContain('route="unmatched_route"');
+      expect(body).not.toContain('/nonexistent-probe-1');
+      expect(body).not.toContain('/nonexistent-probe-2');
+    });
   });
 });
