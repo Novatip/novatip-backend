@@ -19,6 +19,7 @@ import { createHash, randomBytes } from "crypto";
 import { StrKey } from "@stellar/stellar-sdk";
 import { setAuthNonce, consumeAuthNonce } from "../../redis.js";
 import { db } from "../../db.js";
+import { config } from "../../config.js";
 import { isValidAccountId } from "@novatip/sdk";
 import { jarIdForSlug } from "../creator/jar-id.js";
 
@@ -27,6 +28,29 @@ export const MAX_CREATOR_CREATE_ATTEMPTS = 5;
 
 /** Strict UTC ISO-8601 format produced by Date.prototype.toISOString(). */
 const ISO_8601_UTC_REGEX = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+/** First-line format produced by generateChallenge, rejecting spaces, slashes, and userinfo. */
+const CHALLENGE_DOMAIN_LINE_REGEX =
+  /^([^\s/@]+) wants you to sign in with your Stellar account:$/;
+
+/**
+ * Derive the expected challenge domain (host[:port], lowercased) from config.appBaseUrl.
+ * Fails safe with a 500 error if APP_BASE_URL is missing or invalid.
+ */
+export function getExpectedAuthDomain(): string {
+  try {
+    const url = new URL(config.appBaseUrl);
+    if (!url.host) {
+      throw new Error("Empty host");
+    }
+    return url.host.toLowerCase();
+  } catch {
+    throw Object.assign(
+      new Error("Server authentication domain is not configured."),
+      { statusCode: 500 },
+    );
+  }
+}
 
 // ── Challenge ─────────────────────────────────────────────────────────────────
 
@@ -41,7 +65,7 @@ export interface ChallengeMessage {
  */
 export async function generateChallenge(
   walletAddress: string,
-  domain: string,
+  domain: string = getExpectedAuthDomain(),
 ): Promise<ChallengeMessage> {
   if (!isValidAccountId(walletAddress)) {
     throw Object.assign(new Error("Invalid Stellar account address."), {
@@ -106,6 +130,16 @@ export async function verifyChallenge(
   if (!nonce) {
     throw Object.assign(
       new Error("Challenge not found or expired. Request a new challenge."),
+      { statusCode: 401 },
+    );
+  }
+
+  const expectedDomain = getExpectedAuthDomain();
+  const firstLine = signedMessage.split(/\r?\n/, 1)[0] ?? "";
+  const domainMatch = CHALLENGE_DOMAIN_LINE_REGEX.exec(firstLine);
+  if (!domainMatch || domainMatch[1]!.toLowerCase() !== expectedDomain) {
+    throw Object.assign(
+      new Error("Message domain does not match this server."),
       { statusCode: 401 },
     );
   }
