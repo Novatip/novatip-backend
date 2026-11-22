@@ -492,8 +492,14 @@ local development and should remain off in production.
 Webhook secrets are stored as AES-256-GCM ciphertext. Set
 `WEBHOOK_ENCRYPTION_KEY` to a unique 32-byte key encoded as 64 hex characters;
 the server encrypts existing plaintext webhook secrets during startup before
-accepting requests. Back up this key securely: losing or changing it makes the
-stored secrets unusable.
+accepting requests.
+
+To rotate `WEBHOOK_ENCRYPTION_KEY`:
+1. Generate a new 32-byte key: `openssl rand -hex 32`.
+2. Run the key-rotation script to re-encrypt existing stored secrets:
+   `OLD_WEBHOOK_ENCRYPTION_KEY=<old_hex> WEBHOOK_ENCRYPTION_KEY=<new_hex> npx tsx scripts/rotate-webhook-key.ts`
+   (or pass the keys as positional arguments: `npx tsx scripts/rotate-webhook-key.ts <old_hex> <new_hex>`).
+3. Update `WEBHOOK_ENCRYPTION_KEY` in your environment config and restart the service.
 
 POST /webhooks is capped at MAX_WEBHOOKS_PER_CREATOR endpoints per creator
 (default 5). Registering beyond it returns 409 with error.code
