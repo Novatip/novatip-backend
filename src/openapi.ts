@@ -63,13 +63,13 @@ function operation({
     responses: {
       [successStatus]: success,
       "429": rateLimited,
-      ...extraResponses,
       ...(secured && {
         "401": json(
           "Missing or invalid bearer token.",
           schema("ErrorResponse"),
         ),
       }),
+      ...extraResponses,
     },
   };
 }

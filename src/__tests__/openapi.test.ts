@@ -175,4 +175,12 @@ describe("OpenAPI route", () => {
       expect.arrayContaining(["200", "400", "401", "404"]),
     );
   });
+
+  it("lets a custom 401 response override the generic secured 401 on /auth/me", () => {
+    const responses = openApiSpecification.paths["/auth/me"]?.get?.responses;
+
+    expect(responses?.["401"]).toMatchObject({
+      description: "Creator account not found.",
+    });
+  });
 });
