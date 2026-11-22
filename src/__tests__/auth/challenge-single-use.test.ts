@@ -10,6 +10,7 @@
 
 import { jest } from "@jest/globals";
 import { Keypair } from "@stellar/stellar-sdk";
+import { buildChallengeMessage } from "./auth-test.helper.js";
 
 process.env["DATABASE_URL"] ??= "postgresql://user:pass@localhost:5432/test";
 process.env["JWT_SECRET"] ??= "test-secret-not-used-for-signing";
@@ -78,13 +79,14 @@ describe("verifyChallenge single-use nonce behavior", () => {
   it("consumes the nonce on a failed signature attempt and explains a new challenge is required", async () => {
     const nonce = "0123456789abcdef".repeat(4);
     await setAuthNonce(walletAddress, nonce);
+    const signedMessage = buildChallengeMessage({ walletAddress, nonce });
 
     // Provide an invalid signature
     const badSignatureHex = "00".repeat(64);
 
     // First attempt: signature verification fails
     await expect(
-      verifyChallenge(walletAddress, badSignatureHex, mockSignJwt),
+      verifyChallenge(walletAddress, signedMessage, badSignatureHex, mockSignJwt),
     ).rejects.toMatchObject({
       message: "Signature verification failed. Request a new challenge.",
       statusCode: 401,
@@ -92,10 +94,11 @@ describe("verifyChallenge single-use nonce behavior", () => {
 
     // The nonce was consumed during the first attempt, burning it
     expect(store.has(`nonce:${walletAddress}`)).toBe(false);
+    expect(mockDb.creator.findUnique).not.toHaveBeenCalled();
 
     // Second attempt with the same nonce: rejected as missing/expired
     await expect(
-      verifyChallenge(walletAddress, badSignatureHex, mockSignJwt),
+      verifyChallenge(walletAddress, signedMessage, badSignatureHex, mockSignJwt),
     ).rejects.toMatchObject({
       message: "Challenge not found or expired. Request a new challenge.",
       statusCode: 401,

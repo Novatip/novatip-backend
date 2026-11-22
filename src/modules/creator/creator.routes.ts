@@ -45,8 +45,8 @@ const ClaimBody = z.object({
   // still checked against it, so an out-of-sync client gets a 400 rather than
   // a creator whose page and on-chain jar disagree.
   jarId: z.string().min(1).optional(),
-  displayName: z.string().max(80).optional(),
-  bio: z.string().max(300).optional(),
+  displayName: nullableText(80, "Display name").optional(),
+  bio: nullableText(300, "Bio").optional(),
   splits: CreatorSplitsSchema.optional(),
 });
 
