@@ -236,7 +236,10 @@ async function runLoop(options?: IndexerOptions): Promise<void> {
     } catch (err) {
       consecutiveFailures++;
       recordPollError(err);
-      const backoffMs = calculatePollBackoff(consecutiveFailures);
+      const backoffMs = calculatePollBackoff(
+        consecutiveFailures,
+        pollIntervalMs * 2,
+      );
       indexerLogger.error(
         { err, startLedger, consecutiveFailures, backoffMs },
         "poll error",
@@ -273,7 +276,11 @@ export function stopIndexer(): Promise<void> {
 
 // ── Event handler ─────────────────────────────────────────────────────────────
 
-async function handleEvent(event: TipEvent): Promise<void> {
+/**
+ * Persist a single TipEvent and dispatch webhook + email notifications when
+ * the tip is newly created. Exported for tests.
+ */
+export async function handleEvent(event: TipEvent): Promise<void> {
   const txHash = event.txHash;
 
   const isNew = await persistTip(event, txHash);

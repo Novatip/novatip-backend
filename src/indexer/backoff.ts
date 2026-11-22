@@ -7,8 +7,10 @@
  */
 
 /**
- * Base backoff delay in milliseconds for the first failure (12 seconds,
- * matching POLL_INTERVAL_MS * 2).
+ * Default base backoff delay in milliseconds for the first failure (12 seconds,
+ * matching the default 6,000 ms poll interval * 2). Callers such as `runLoop`
+ * pass `pollIntervalMs * 2` as `baseMs` so the backoff tracks the configured
+ * poll cadence; this constant is used only when `baseMs` is omitted.
  */
 export const BASE_POLL_BACKOFF_MS = 12_000;
 
@@ -23,14 +25,17 @@ export const MAX_POLL_BACKOFF_MS = 60_000;
 /**
  * Calculate the backoff sleep duration in milliseconds based on consecutive failures.
  *
- * Escalates exponentially with consecutive failures:
- * - 1 failure:  12,000 ms (12s)
- * - 2 failures: 24,000 ms (24s)
- * - 3 failures: 48,000 ms (48s)
- * - 4+ failures: 60,000 ms (capped at MAX_POLL_BACKOFF_MS)
+ * Escalates exponentially with consecutive failures (`baseMs * 2^(consecutiveFailures - 1)`),
+ * capped at `maxMs`. When `baseMs` is omitted it defaults to `BASE_POLL_BACKOFF_MS`
+ * (12,000 ms); `runLoop` passes `pollIntervalMs * 2` so the backoff schedule
+ * scales proportionally with the configured poll interval:
+ * - 1 failure:  baseMs (12,000 ms at the default 6,000 ms poll interval)
+ * - 2 failures: baseMs * 2 (24,000 ms)
+ * - 3 failures: baseMs * 4 (48,000 ms)
+ * - 4+ failures: capped at MAX_POLL_BACKOFF_MS (60,000 ms)
  *
  * @param consecutiveFailures - Total consecutive poll errors encountered (>= 1)
- * @param baseMs - Base backoff duration (defaults to BASE_POLL_BACKOFF_MS)
+ * @param baseMs - Base backoff duration (defaults to BASE_POLL_BACKOFF_MS; `runLoop` passes `pollIntervalMs * 2`)
  * @param maxMs - Upper backoff ceiling (defaults to MAX_POLL_BACKOFF_MS)
  * @returns Delay in milliseconds to sleep before retrying
  */
