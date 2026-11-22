@@ -547,6 +547,20 @@ export const openApiSpecification = {
         extraResponses: { "400": validationError },
       }),
     },
+    "/notifications/read": {
+      post: operation({
+        summary: "Mark notifications as read",
+        description:
+          "Mark specific notifications or all notifications as read. Provide either 'notificationIds' (an array of notification IDs) or 'all: true', but not both.",
+        success: json(
+          "Number of notifications marked as read.",
+          schema("MarkNotificationsReadResponse"),
+        ),
+        requestBody: requestBody(schema("MarkNotificationsReadRequest")),
+        secured: true,
+        extraResponses: { "400": validationError },
+      }),
+    },
     "/notifications/preferences": {
       get: operation({
         summary: "Get the authenticated creator's notification preferences",
@@ -1367,6 +1381,32 @@ export const openApiSpecification = {
           },
         },
         required: ["preferences"],
+      },
+      MarkNotificationsReadRequest: {
+        type: "object",
+        properties: {
+          notificationIds: {
+            type: "array",
+            items: { type: "string" },
+            description: "Array of notification IDs to mark as read.",
+          },
+          all: {
+            type: "boolean",
+            description: "Set to true to mark all notifications as read.",
+          },
+        },
+        description:
+          "Must provide either 'notificationIds' or 'all: true', but not both.",
+      },
+      MarkNotificationsReadResponse: {
+        type: "object",
+        properties: {
+          markedRead: {
+            type: "integer",
+            description: "Number of notifications marked as read.",
+          },
+        },
+        required: ["markedRead"],
       },
     },
   },
