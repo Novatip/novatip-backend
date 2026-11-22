@@ -112,7 +112,7 @@ model Tip {
   /// Every analytics query filters by creatorId first. The two composites
   /// below cover that plus their own trailing column, so no single-column
   /// index on creatorId, fromAddress, ledger or ledgerAt is kept — see
-  /// 20261021000000_drop_tip_unused_indexes.
+  /// 20261021000001_drop_tip_unused_indexes.
   /// Supports getTopSupporters' GROUP BY "fromAddress" scoped to a creator
   @@index([creatorId, fromAddress])
   /// Supports getTimeSeries' GROUP BY date_trunc("ledgerAt") scoped to a creator,

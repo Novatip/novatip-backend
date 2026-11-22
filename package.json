@@ -21,7 +21,8 @@
     "db:studio": "prisma studio",
     "db:seed": "tsx prisma/seed.ts",
     "check:reserved-slugs": "tsx scripts/check-reserved-slugs.ts",
-    "check:env-docs": "tsx scripts/check-env-docs.ts"
+    "check:env-docs": "tsx scripts/check-env-docs.ts",
+    "check:migration-timestamps": "tsx scripts/check-migration-timestamps.ts"
   },
   "dependencies": {
     "@fastify/cors": "^9.0.1",

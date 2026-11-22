@@ -92,6 +92,9 @@ jobs:
       - name: Check env var docs
         run: npm run check:env-docs
 
+      - name: Check migration timestamps
+        run: npm run check:migration-timestamps
+
       - name: Typecheck
         run: npm run typecheck
 
