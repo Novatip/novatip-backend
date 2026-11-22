@@ -362,6 +362,19 @@ export const config = {
     slugHoldDays: optionalInt("CREATOR_SLUG_HOLD_DAYS", 90, 0),
 
     /**
+     * Minimum days between slug renames. Prevents slug squatting: a creator
+     * who can rename freely can reserve an unlimited number of slugs by
+     * renaming a → b → c → d, holding each for the full CREATOR_SLUG_HOLD_DAYS
+     * window. A rename cooldown makes the rename history finite and time-bound.
+     * 0 disables the cooldown, allowing unlimited renames.
+     */
+    slugRenameCooldownDays: optionalInt(
+      "CREATOR_SLUG_RENAME_COOLDOWN_DAYS",
+      0,
+      0,
+    ),
+
+    /**
      * Days after which an abandoned sign-in placeholder — a creator still on
      * its auto-generated user_xxxxxxxx slug, with no tips, webhooks,
      * notifications or released slugs — becomes eligible for deletion. A
