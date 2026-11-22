@@ -21,6 +21,7 @@ import { logger } from "../../utils/logger.js";
 import { assertWebhookLimit, webhookLimit } from "./limit.js";
 import { notifyWebhookFailure } from "../notifications/webhook-failure.service.js";
 import {
+  recordWebhookDecryptError,
   recordWebhookDelivery,
   recordWebhookDuration,
 } from "../metrics/metrics.service.js";
@@ -292,6 +293,55 @@ async function deliver(
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const startTime = Date.now();
 
+  let secret: string;
+  try {
+    secret = decryptWebhookSecret(
+      webhook.secret,
+      getWebhookEncryptionKey(),
+    );
+  } catch (err) {
+    webhookLogger.error(
+      { err, webhookId: webhook.id },
+      "failed to decrypt webhook secret",
+    );
+    recordWebhookDecryptError();
+    recordWebhookDelivery("failure");
+    recordWebhookDuration((Date.now() - startTime) / 1000);
+
+    let attempt: DeliveryOutcome | undefined;
+    try {
+      attempt = await db.webhookDelivery.create({
+        data: {
+          webhookId: webhook.id,
+          statusCode: null,
+          success: false,
+          payload: boundPayload(payload, config.webhooks.maxPayloadSize),
+          response: WEBHOOK_SECRET_DECRYPT_FAILED_CODE,
+        },
+        select: {
+          statusCode: true,
+          success: true,
+          response: true,
+          attemptedAt: true,
+        },
+      });
+    } catch (recordErr) {
+      webhookLogger.error(
+        { err: recordErr, webhookId: webhook.id },
+        "failed to record webhook delivery",
+      );
+    }
+
+    return (
+      attempt ?? {
+        statusCode: null,
+        success: false,
+        response: WEBHOOK_SECRET_DECRYPT_FAILED_CODE,
+        attemptedAt: new Date(startTime),
+      }
+    );
+  }
+
   let statusCode: number | undefined;
   let responseText: string | undefined;
   let success = false;
@@ -299,10 +349,6 @@ async function deliver(
 
   try {
     const destination = await assertWebhookDestinationAllowed(webhook.url);
-    const secret = decryptWebhookSecret(
-      webhook.secret,
-      getWebhookEncryptionKey(),
-    );
     const signature = sign(body, secret, timestamp);
     const controller = new AbortController();
     timer = setTimeout(
@@ -598,6 +644,65 @@ export async function migrateWebhookSecrets(): Promise<number> {
 
   webhookLogger.info({ migrated }, "encrypted legacy webhook secrets");
   return migrated;
+}
+
+/**
+ * error.code / response identifier recorded when webhook secret decryption fails.
+ */
+export const WEBHOOK_SECRET_DECRYPT_FAILED_CODE = "WEBHOOK_SECRET_DECRYPT_FAILED";
+
+/**
+ * Rotate encryption key for all encrypted webhook secrets.
+ * Decrypts existing secrets using `oldKey` and re-encrypts them using `newKey`
+ * (defaults to the currently configured WEBHOOK_ENCRYPTION_KEY).
+ */
+export async function rotateWebhookSecrets(
+  oldKeyInput: Buffer | string,
+  newKeyInput?: Buffer | string,
+): Promise<{ total: number; rotated: number; failed: number }> {
+  const oldKey =
+    typeof oldKeyInput === "string"
+      ? parseWebhookEncryptionKey(oldKeyInput)
+      : oldKeyInput;
+  const newKey =
+    newKeyInput !== undefined
+      ? typeof newKeyInput === "string"
+        ? parseWebhookEncryptionKey(newKeyInput)
+        : newKeyInput
+      : getWebhookEncryptionKey();
+
+  const rows = await db.webhook.findMany({
+    select: { id: true, secret: true },
+  });
+
+  let rotated = 0;
+  let failed = 0;
+  for (const row of rows) {
+    if (!isEncryptedWebhookSecret(row.secret)) {
+      continue;
+    }
+    try {
+      const plaintext = decryptWebhookSecret(row.secret, oldKey);
+      const reencrypted = encryptWebhookSecret(plaintext, newKey);
+      const result = await db.webhook.updateMany({
+        where: { id: row.id, secret: row.secret },
+        data: { secret: reencrypted },
+      });
+      rotated += result.count;
+    } catch (err) {
+      failed++;
+      webhookLogger.error(
+        { err, webhookId: row.id },
+        "failed to re-encrypt webhook secret during key rotation",
+      );
+    }
+  }
+
+  webhookLogger.info(
+    { total: rows.length, rotated, failed },
+    "completed webhook secret key rotation",
+  );
+  return { total: rows.length, rotated, failed };
 }
 
 /**
