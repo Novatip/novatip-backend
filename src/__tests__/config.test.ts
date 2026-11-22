@@ -20,6 +20,8 @@ const envKeys = [
   "WEBHOOK_DELIVERY_FAILURE_RETENTION_DAYS",
   "REDIS_MAX_RETRIES_PER_REQUEST",
   "REDIS_ENABLE_READY_CHECK",
+  "METRICS_ENABLED",
+  "METRICS_TOKEN",
 ] as const;
 const originalEnv = Object.fromEntries(
   envKeys.map((key) => [key, process.env[key]]),
@@ -55,6 +57,8 @@ beforeEach(() => {
   delete process.env["WEBHOOK_DELIVERY_FAILURE_RETENTION_DAYS"];
   delete process.env["REDIS_MAX_RETRIES_PER_REQUEST"];
   delete process.env["REDIS_ENABLE_READY_CHECK"];
+  delete process.env["METRICS_ENABLED"];
+  delete process.env["METRICS_TOKEN"];
 });
 
 afterEach(() => {
@@ -282,3 +286,31 @@ describe("config.redis", () => {
     );
   });
 });
+
+describe("config.metrics", () => {
+  it("defaults metricsEnabled to false and metricsToken to empty string", async () => {
+    await expect(loadConfig()).resolves.toMatchObject({
+      metricsEnabled: false,
+      metricsToken: "",
+    });
+  });
+
+  it("loads configured metricsEnabled and metricsToken", async () => {
+    process.env["METRICS_ENABLED"] = "true";
+    process.env["METRICS_TOKEN"] = "my-secret-token";
+
+    await expect(loadConfig()).resolves.toMatchObject({
+      metricsEnabled: true,
+      metricsToken: "my-secret-token",
+    });
+  });
+
+  it("rejects non-boolean METRICS_ENABLED", async () => {
+    process.env["METRICS_ENABLED"] = "not-a-boolean";
+
+    await expect(loadConfig()).rejects.toThrow(
+      'Env var METRICS_ENABLED must be "true" or "false", got "not-a-boolean"',
+    );
+  });
+});
+
