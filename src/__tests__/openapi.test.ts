@@ -108,6 +108,7 @@ describe("OpenAPI route", () => {
   it("documents the shared slug format and malformed-slug response", () => {
     const slugPaths = [
       "/creators/{slug}",
+      "/creators/check/{slug}",
       "/resolve/{slug}",
       "/qr/{slug}",
       "/qr/{slug}/png",

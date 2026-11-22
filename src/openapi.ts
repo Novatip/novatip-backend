@@ -91,7 +91,6 @@ const rateLimited = json(
   schema("RateLimitResponse"),
 );
 
-const slugParameter = pathParameter("slug", "Creator's public slug.");
 const validatedSlugParameter = pathParameter(
   "slug",
   "Creator's public slug: 3–32 lowercase letters, numbers, underscores, or hyphens.",
@@ -271,7 +270,8 @@ export const openApiSpecification = {
           "Availability result.",
           schema("SlugAvailabilityResponse"),
         ),
-        parameters: [slugParameter],
+        parameters: [validatedSlugParameter],
+        extraResponses: { "400": validationError },
       }),
     },
     "/creators/claim": {
