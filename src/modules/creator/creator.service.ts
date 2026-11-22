@@ -93,7 +93,14 @@ export interface PublicCreator {
   avatarUrl: string | null;
   jarId: string;
   splits: Prisma.JsonValue;
-  createdAt: Date;
+  /**
+   * Account creation time as an ISO 8601 string rather than a Date. Over the
+   * wire this was always an ISO string — JSON has no date type — but the
+   * cached and uncached paths disagreed on the in-process type, since a Date
+   * does not survive a round trip through Redis. Normalising here makes the
+   * two paths return the same thing.
+   */
+  createdAt: string;
 }
 
 // The `| undefined` on each optional field is deliberate. The tsconfig enables
@@ -514,8 +521,13 @@ export async function getCreatorBySlug(slug: string): Promise<PublicCreator> {
     throw Object.assign(new Error("Creator not found."), { statusCode: 404 });
   }
 
-  await cacheSet(cacheKey, creator, PROFILE_CACHE_TTL);
-  return creator;
+  const result: PublicCreator = {
+    ...creator,
+    createdAt: creator.createdAt.toISOString(),
+  };
+
+  await cacheSet(cacheKey, result, PROFILE_CACHE_TTL);
+  return result;
 }
 
 /**
