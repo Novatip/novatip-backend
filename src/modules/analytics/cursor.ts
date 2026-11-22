@@ -31,6 +31,16 @@ export interface TipCursor {
 
 const SEPARATOR = "|";
 
+/**
+ * Maximum length of a base64url-encoded cursor accepted by decodeTipCursor.
+ *
+ * Every cursor this server issues is "<24-char ISO timestamp>|<cuid or 64-char txHash>"
+ * (~50-90 bytes, ~68-120 base64url chars). Capping at 256 chars comfortably
+ * fits every legitimate cursor while preventing unauthenticated callers from
+ * inflating Redis cache keys with arbitrarily long cursor strings.
+ */
+export const MAX_CURSOR_LENGTH = 256;
+
 function badCursor(): Error {
   // A malformed cursor is a bad request, not a server fault — without a
   // statusCode the global error handler would report it as a 500.
@@ -54,7 +64,13 @@ export function encodeTipCursor(ledgerAt: Date, key: string): string {
  * empty key) would silently page from the wrong place rather than fail.
  */
 export function decodeTipCursor(raw: string): TipCursor {
-  if (typeof raw !== "string" || raw.trim() === "") throw badCursor();
+  if (
+    typeof raw !== "string" ||
+    raw.trim() === "" ||
+    raw.length > MAX_CURSOR_LENGTH
+  ) {
+    throw badCursor();
+  }
 
   const decoded = Buffer.from(raw, "base64url").toString("utf8");
 
