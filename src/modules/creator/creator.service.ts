@@ -403,8 +403,9 @@ export async function renameSlug(input: RenameSlugInput) {
 /**
  * Remove a creator profile and its private account-owned records while keeping
  * indexed tips as unattributed financial history. The schema sets tip creator
- * references to null when the creator is deleted; webhook delivery records and
- * notifications are explicitly deleted before their parent records.
+ * references to null and cascades notification deletion when the creator is
+ * deleted; webhook delivery records are explicitly deleted before their parent
+ * webhooks.
  */
 export async function deleteCreator(creatorId: string): Promise<void> {
   const slug = await db.$transaction(async (tx) => {
@@ -415,8 +416,6 @@ export async function deleteCreator(creatorId: string): Promise<void> {
     if (!creator) {
       throw Object.assign(new Error("Creator not found."), { statusCode: 404 });
     }
-
-    await tx.notification.deleteMany({ where: { creatorId } });
 
     const webhooks = await tx.webhook.findMany({
       where: { creatorId },
