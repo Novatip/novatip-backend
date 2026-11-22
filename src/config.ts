@@ -36,6 +36,13 @@ function optionalInt(key: string, fallback: number, min?: number): number {
   return parsed;
 }
 
+const NODE_ENVS = ["development", "production", "test"] as const;
+type NodeEnv = (typeof NODE_ENVS)[number];
+
+function isNodeEnv(value: string): value is NodeEnv {
+  return (NODE_ENVS as readonly string[]).includes(value);
+}
+
 const STELLAR_NETWORKS = ["testnet", "mainnet", "local"] as const;
 type StellarNetwork = (typeof STELLAR_NETWORKS)[number];
 
@@ -112,6 +119,11 @@ function optionalBoolean(key: string, fallback: boolean): boolean {
 const appBaseUrl = optional("APP_BASE_URL", "http://localhost:3000");
 const apiBaseUrl = optional("API_BASE_URL", "http://localhost:3001");
 const nodeEnv = optional("NODE_ENV", "development");
+if (!isNodeEnv(nodeEnv)) {
+  throw new Error(
+    `Env var NODE_ENV must be one of ${NODE_ENVS.join(", ")}, got "${nodeEnv}"`,
+  );
+}
 const webhookEncryptionKey = optional("WEBHOOK_ENCRYPTION_KEY", "");
 
 if (
@@ -183,12 +195,21 @@ export const config = {
 
   stellar: {
     network: stellarNetwork,
-    rpcUrl: optional("SOROBAN_RPC_URL", "https://soroban-testnet.stellar.org"),
-    horizonUrl: optional("HORIZON_URL", "https://horizon-testnet.stellar.org"),
-    passphrase: optional(
-      "NETWORK_PASSPHRASE",
-      "Test SDF Network ; September 2015",
-    ),
+    rpcUrl:
+      stellarNetwork === "mainnet"
+        ? require("SOROBAN_RPC_URL")
+        : optional("SOROBAN_RPC_URL", "https://soroban-testnet.stellar.org"),
+    horizonUrl:
+      stellarNetwork === "mainnet"
+        ? require("HORIZON_URL")
+        : optional("HORIZON_URL", "https://horizon-testnet.stellar.org"),
+    passphrase:
+      stellarNetwork === "mainnet"
+        ? require("NETWORK_PASSPHRASE")
+        : optional(
+            "NETWORK_PASSPHRASE",
+            "Test SDF Network ; September 2015",
+          ),
     tipSplitterContractId: require("TIP_SPLITTER_CONTRACT_ID"),
     // Defaulting this on mainnet would silently point at an asset that
     // doesn't exist there (the fallback below is the *testnet* USDC SAC), so
@@ -470,8 +491,10 @@ export const config = {
   },
 
   /**
-   * Bearer token GET /metrics requires. Empty means no token is checked, so
-   * the server should then be bound to an address only the scraper reaches.
+   * Bearer token GET /metrics requires. When empty, /metrics is served without
+   * authentication — the server does not bind /metrics to an internal interface
+   * automatically, so operators must enforce external network-level access controls
+   * (e.g. firewall, reverse proxy, or loopback host binding).
    */
   get metricsToken(): string {
     return optional("METRICS_TOKEN", "");

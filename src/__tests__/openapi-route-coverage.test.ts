@@ -91,4 +91,42 @@ describe("OpenAPI route coverage", () => {
       expect(alias).not.toBe(target);
     }
   });
+
+  it("documents every zod-validated query key in exported route query schemas", async () => {
+    const { DeliveryQuery, WebhookQuery } = await import(
+      "../modules/webhooks/webhooks.routes.js"
+    );
+    const { RecentQuery: PublicRecentQuery } = await import(
+      "../modules/public/public.routes.js"
+    );
+    const { RecentQuery: AnalyticsRecentQuery } = await import(
+      "../modules/analytics/analytics.routes.js"
+    );
+
+    const querySchemas = [
+      { path: "/webhooks/{id}/deliveries", schema: DeliveryQuery },
+      { path: "/webhooks", schema: WebhookQuery },
+      { path: "/public/{slug}/recent", schema: PublicRecentQuery },
+      { path: "/analytics/recent", schema: AnalyticsRecentQuery },
+    ] as const;
+
+    const paths = openApiSpecification.paths as Record<
+      string,
+      { get?: { parameters?: Array<{ name?: string; in?: string }> } }
+    >;
+
+    for (const { path, schema } of querySchemas) {
+      const documentedQueryParams = new Set(
+        (paths[path]?.get?.parameters ?? [])
+          .filter(
+            (param) => param.in === "query" && typeof param.name === "string",
+          )
+          .map((param) => param.name!),
+      );
+
+      for (const key of Object.keys(schema.shape)) {
+        expect(documentedQueryParams).toContain(key);
+      }
+    }
+  });
 });
