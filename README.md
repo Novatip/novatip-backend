@@ -156,6 +156,7 @@ INDEXER_POLL_INTERVAL_MS - How often the indexer polls Soroban RPC for new TipRe
 INDEXER_POLL_LIMIT - Max TipReceived events fetched from Soroban RPC per poll iteration (default: 200)
 UNOWNED_TIP_RETENTION_DAYS - Days unowned tips (no creatorId, e.g. sent before a jar was claimed) are kept before pruning (default: 90, 0 disables pruning)
 CREATOR_SLUG_HOLD_DAYS - Days a slug released by renaming, claiming, or account deletion stays unavailable (default: 90, 0 disables the hold; deleted accounts have no owner exemption)
+CREATOR_SLUG_RENAME_COOLDOWN_DAYS - Minimum days between slug renames; prevents slug squatting by rate-limiting the rename history (default: 0, which disables the cooldown; first rename after claiming has no cooldown)
 PLACEHOLDER_CREATOR_RETENTION_DAYS - Days before an abandoned sign-in placeholder (unclaimed user_xxxxxxxx slug, no tips, webhooks, notifications or released slugs) becomes eligible for deletion (default: 30, 0 disables the job)
 PLACEHOLDER_CREATOR_PRUNE_BATCH_SIZE - Rows deleted per statement (default: 500)
 PLACEHOLDER_CREATOR_PRUNE_INTERVAL_MINUTES - How often the placeholder pruner runs (default: 60)
