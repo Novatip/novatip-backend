@@ -63,13 +63,13 @@ function operation({
     responses: {
       [successStatus]: success,
       "429": rateLimited,
-      ...extraResponses,
       ...(secured && {
         "401": json(
           "Missing or invalid bearer token.",
           schema("ErrorResponse"),
         ),
       }),
+      ...extraResponses,
     },
   };
 }
@@ -386,6 +386,13 @@ export const openApiSpecification = {
         summary: "Get a creator tip-page QR code as SVG",
         success: {
           description: "QR code image.",
+          headers: {
+            "Cache-Control": {
+              description:
+                "Caching directive for the generated QR code (`public, max-age=3600`).",
+              schema: { type: "string" },
+            },
+          },
           content: { "image/svg+xml": { schema: { type: "string" } } },
         },
         parameters: [validatedSlugParameter],
@@ -401,6 +408,18 @@ export const openApiSpecification = {
         summary: "Download a creator tip-page QR code as PNG",
         success: {
           description: "PNG QR code image.",
+          headers: {
+            "Cache-Control": {
+              description:
+                "Caching directive for the generated QR code (`public, max-age=3600`).",
+              schema: { type: "string" },
+            },
+            "Content-Disposition": {
+              description:
+                'Download filename (`attachment; filename="novatip-{slug}.png"`).',
+              schema: { type: "string" },
+            },
+          },
           content: {
             "image/png": { schema: { type: "string", format: "binary" } },
           },
@@ -502,6 +521,18 @@ export const openApiSpecification = {
           "Streams every tip for the authenticated creator as a CSV attachment. Also reachable as /analytics/csv, /analytics/recent.csv, /analytics/export.csv, /analytics/tips.csv and /analytics/history.csv — documented aliases of this same endpoint (see documentedRouteAliases in openapi.ts).",
         success: {
           description: "CSV file of the creator's tip history.",
+          headers: {
+            "Content-Disposition": {
+              description:
+                'Download filename (`attachment; filename="{slug}-tip-history.csv"`).',
+              schema: { type: "string" },
+            },
+            "Cache-Control": {
+              description:
+                "Caching directive opting out of caching (`no-store`).",
+              schema: { type: "string" },
+            },
+          },
           content: { "text/csv": { schema: { type: "string" } } },
         },
         secured: true,
@@ -651,6 +682,14 @@ export const openApiSpecification = {
             default: 20,
           }),
           paginationParameters[1]!,
+          queryParameter(
+            "success",
+            "Filter delivery attempts by outcome (`true` or `false`).",
+            {
+              type: "string",
+              enum: ["true", "false"],
+            },
+          ),
         ],
         secured: true,
         extraResponses: {
@@ -990,7 +1029,13 @@ export const openApiSpecification = {
           jarId: { type: "string", minLength: 1 },
           displayName: { type: "string", maxLength: 80 },
           bio: { type: "string", maxLength: 300 },
-          splits: { type: "array", items: schema("Split") },
+          splits: {
+            type: "array",
+            maxItems: 50,
+            description:
+              "Recipients must be unique, total basis points must not exceed 10000, and at most 50 splits may be configured.",
+            items: schema("Split"),
+          },
         },
         required: ["slug"],
       },
@@ -1020,8 +1065,9 @@ export const openApiSpecification = {
           splits: {
             type: "array",
             minItems: 1,
+            maxItems: 50,
             description:
-              "Recipients must be unique, and total basis points must not exceed 10000.",
+              "Recipients must be unique, total basis points must not exceed 10000, and at most 50 splits may be configured.",
             items: schema("Split"),
           },
         },
