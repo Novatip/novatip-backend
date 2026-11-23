@@ -21,11 +21,11 @@ import { generateChallenge, verifyChallenge } from "./auth.service.js";
 const AUTH_CHALLENGE_RATE_LIMIT = config.rateLimits.authChallenge;
 const AUTH_VERIFY_RATE_LIMIT = config.rateLimits.authVerify;
 
-const ChallengeBody = z.object({
+export const ChallengeBody = z.object({
   walletAddress: z.string().min(56).max(56),
 });
 
-const VerifyBody = z.object({
+export const VerifyBody = z.object({
   walletAddress: z.string().min(56).max(56),
   message: z.string(),
   signatureHex: z.string().length(128),

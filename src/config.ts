@@ -460,6 +460,11 @@ export const config = {
      * history through the database in batches of 500.
      */
     csvExport: optionalInt("CSV_EXPORT_RATE_LIMIT", 5),
+
+    /**
+     * Per-IP cap on creator email verification requests via PATCH /creators/me.
+     */
+    emailVerification: optionalInt("EMAIL_VERIFICATION_RATE_LIMIT", 5),
   },
 
   appBaseUrl,

@@ -1,7 +1,12 @@
+process.env["DATABASE_URL"] ??= "postgresql://user:pass@localhost:5432/test";
+process.env["JWT_SECRET"] ??= "test-secret-at-least-32-chars-long-123456";
+process.env["TIP_SPLITTER_CONTRACT_ID"] ??= `C${"A".repeat(55)}`;
+
 import Fastify from "fastify";
 import { Prisma } from "@prisma/client";
 import { openApiSpecification } from "../openapi.js";
 import { openApiRoutes } from "../modules/openapi/openapi.routes.js";
+import { VerifyBody } from "../modules/auth/auth.routes.js";
 
 describe("OpenAPI route", () => {
   it("serves the documented API specification as JSON", async () => {

@@ -85,7 +85,7 @@ export async function buildServer(
       const startTime = (request as any).startTime;
       if (startTime) {
         const durationSeconds = (Date.now() - startTime) / 1000;
-        const route = request.routeOptions.url || request.url;
+        const route = request.routeOptions?.url || "unmatched_route";
         recordHttpRequest(request.method, route, reply.statusCode, durationSeconds);
       }
     });

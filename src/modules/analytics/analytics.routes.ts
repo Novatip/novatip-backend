@@ -129,21 +129,28 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
         .send(tipHistoryCsvStream(user.sub));
     };
 
-  app.get(
-    "/export",
-    {
-      // Tighter per-route limit than the global budget: each export streams the
-      // creator's full tip history, while dashboard polling on /recent and the
-      // summary endpoints stays on the global budget.
-      config: {
-        rateLimit: {
-          max: config.rateLimits.csvExport,
-          timeWindow: "1 minute",
-        },
+  const exportRouteOptions = {
+    // Tighter per-route limit than the global budget: each export streams the
+    // creator's full tip history, while dashboard polling on /recent and the
+    // summary endpoints stays on the global budget.
+    config: {
+      rateLimit: {
+        max: config.rateLimits.csvExport,
+        timeWindow: "1 minute",
       },
     },
-    exportCsv,
-  );
+  };
+
+  app.get("/export", exportRouteOptions, exportCsv);
+  for (const alias of [
+    "/csv",
+    "/recent.csv",
+    "/export.csv",
+    "/tips.csv",
+    "/history.csv",
+  ]) {
+    app.get(alias, exportRouteOptions, exportCsv);
+  }
 
   // ── GET /collaborators ─────────────────────────────────────────────────────
   app.get("/collaborators", async (request, reply) => {

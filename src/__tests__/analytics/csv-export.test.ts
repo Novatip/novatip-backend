@@ -225,4 +225,29 @@ describe("GET /analytics/export", () => {
       await app.close();
     }
   });
+
+  test.each([
+    "/analytics/csv",
+    "/analytics/recent.csv",
+    "/analytics/export.csv",
+    "/analytics/tips.csv",
+    "/analytics/history.csv",
+  ])("serves CSV export under documented alias %s", async (url) => {
+    const app = await buildTestServer();
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url,
+        headers: { authorization: "Bearer valid-token" },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.headers["content-type"]).toBe("text/csv; charset=utf-8");
+      expect(response.headers["content-disposition"]).toBe(
+        'attachment; filename="alice-tip-history.csv"',
+      );
+    } finally {
+      await app.close();
+    }
+  });
 });

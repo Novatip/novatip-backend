@@ -61,6 +61,8 @@ jest.unstable_mockModule("../../modules/creator/creator.service.js", () => ({
   updateCreatorSplits: updateCreatorSplitsMock,
   isSlugAvailable: jest.fn(),
   deleteCreator: deleteCreatorMock,
+  isEmailVerificationInCooldown: jest.fn(async () => false),
+  recordEmailVerificationCooldown: jest.fn(async () => undefined),
 }));
 
 jest.unstable_mockModule("../../modules/creator/messages.service.js", () => ({

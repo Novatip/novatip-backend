@@ -680,3 +680,44 @@ export async function isSlugAvailable(
 
   return true;
 }
+
+/** Cooldown period in seconds before a verification email can be resent for the same address. */
+export const EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS = 60;
+const emailCooldownMap = new Map<string, number>();
+
+export async function isEmailVerificationInCooldown(
+  creatorId: string,
+  email: string,
+): Promise<boolean> {
+  const normalizedEmail = email.trim().toLowerCase();
+  const key = `email-cooldown:${creatorId}:${normalizedEmail}`;
+  const localExp = emailCooldownMap.get(key);
+  if (localExp !== undefined) {
+    if (localExp > Date.now()) {
+      return true;
+    }
+    emailCooldownMap.delete(key);
+  }
+  const cached = await cacheGet<string>(key);
+  if (cached !== null) {
+    return true;
+  }
+  return false;
+}
+
+export async function recordEmailVerificationCooldown(
+  creatorId: string,
+  email: string,
+): Promise<void> {
+  const normalizedEmail = email.trim().toLowerCase();
+  const key = `email-cooldown:${creatorId}:${normalizedEmail}`;
+  emailCooldownMap.set(
+    key,
+    Date.now() + EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS * 1000,
+  );
+  await cacheSet(key, "1", EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS);
+}
+
+export function resetEmailVerificationCooldown(): void {
+  emailCooldownMap.clear();
+}
