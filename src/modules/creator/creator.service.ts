@@ -282,34 +282,49 @@ export async function claimSlug(input: ClaimSlugInput) {
 
   let creator;
   try {
-    creator = await db.creator.update({
-      where: { id: input.creatorId },
-      data: {
-        slug: input.slug,
-        jarId,
-        splits: input.splits ?? [],
-        ...(input.displayName !== undefined && {
-          displayName: input.displayName,
-        }),
-        ...(input.bio !== undefined && { bio: input.bio }),
-      },
+    creator = await db.$transaction(async (tx) => {
+      const updatedCreator = await tx.creator.update({
+        where: { id: input.creatorId },
+        data: {
+          slug: input.slug,
+          jarId,
+          splits: input.splits ?? [],
+          ...(input.displayName !== undefined && {
+            displayName: input.displayName,
+          }),
+          ...(input.bio !== undefined && { bio: input.bio }),
+        },
+      });
+
+      await tx.tip.updateMany({
+        where: {
+          jarId,
+          creatorId: null,
+        },
+        data: {
+          creatorId: updatedCreator.id,
+        },
+      });
+
+      if (current && current.slug !== input.slug) {
+        await tx.releasedSlug.upsert({
+          where: { slug: current.slug },
+          create: {
+            slug: current.slug,
+            previousOwnerId: input.creatorId,
+            releasedAt: new Date(),
+          },
+          update: {
+            previousOwnerId: input.creatorId,
+            releasedAt: new Date(),
+          },
+        });
+      }
+
+      return updatedCreator;
     });
   } catch (err) {
     throw toClaimConflict(toCreatorNotFound(err));
-  }
-
-  await db.tip.updateMany({
-    where: {
-      jarId,
-      creatorId: null,
-    },
-    data: {
-      creatorId: creator.id,
-    },
-  });
-
-  if (current && current.slug !== input.slug) {
-    await recordSlugRelease(current.slug, input.creatorId);
   }
 
   await cacheInvalidate(`creator:${input.slug}`);
@@ -335,6 +350,12 @@ export interface RenameSlugInput {
  * its original jarId, changing only where the tip page resolves.
  * Records the slug left behind as released — that record is what starts the
  * hold — and invalidates the resolver cache for both the old and new slug.
+ *
+ * A rename cooldown (CREATOR_SLUG_RENAME_COOLDOWN_DAYS) prevents slug
+ * squatting: a creator who can rename freely can reserve unlimited slugs by
+ * renaming a → b → c → d, holding each for the full CREATOR_SLUG_HOLD_DAYS
+ * window. The first rename after claiming has no cooldown; subsequent renames
+ * are rate-limited.
  */
 export async function renameSlug(input: RenameSlugInput) {
   if (!CREATOR_SLUG_REGEX.test(input.slug)) {
@@ -362,6 +383,35 @@ export async function renameSlug(input: RenameSlugInput) {
 
   const oldSlug = current.slug;
 
+  // Enforce rename cooldown if configured
+  if (config.creators.slugRenameCooldownDays > 0) {
+    const lastRelease = await db.releasedSlug.findFirst({
+      where: { previousOwnerId: input.creatorId },
+      orderBy: { releasedAt: "desc" },
+    });
+
+    if (lastRelease) {
+      const cooldownMs =
+        config.creators.slugRenameCooldownDays * MILLIS_PER_DAY;
+      const nextAllowedAt = new Date(
+        lastRelease.releasedAt.getTime() + cooldownMs,
+      );
+
+      if (Date.now() < nextAllowedAt.getTime()) {
+        throw Object.assign(
+          new Error(
+            `You may rename again on ${nextAllowedAt.toISOString().slice(0, 10)}.`,
+          ),
+          {
+            statusCode: 429,
+            code: "RENAME_COOLDOWN",
+            nextAllowedAt: nextAllowedAt.toISOString(),
+          },
+        );
+      }
+    }
+  }
+
   const existing = await db.creator.findUnique({ where: { slug: input.slug } });
   if (existing && existing.id !== input.creatorId) {
     throw Object.assign(new Error("This slug is already taken."), {
@@ -376,20 +426,35 @@ export async function renameSlug(input: RenameSlugInput) {
 
   let creator;
   try {
-    creator = await db.creator.update({
-      where: { id: input.creatorId },
-      data: {
-        slug: input.slug,
-      },
+    creator = await db.$transaction(async (tx) => {
+      const updatedCreator = await tx.creator.update({
+        where: { id: input.creatorId },
+        data: {
+          slug: input.slug,
+        },
+      });
+
+      // The slug just left behind is the one the hold protects. Recorded in
+      // the same transaction so a rename that never landed doesn't hold anything.
+      if (input.slug !== oldSlug) {
+        await tx.releasedSlug.upsert({
+          where: { slug: oldSlug },
+          create: {
+            slug: oldSlug,
+            previousOwnerId: input.creatorId,
+            releasedAt: new Date(),
+          },
+          update: {
+            previousOwnerId: input.creatorId,
+            releasedAt: new Date(),
+          },
+        });
+      }
+
+      return updatedCreator;
     });
   } catch (err) {
     throw toClaimConflict(err);
-  }
-
-  // The slug just left behind is the one the hold protects. Recorded after
-  // the write so a rename that never landed doesn't hold anything.
-  if (input.slug !== oldSlug) {
-    await recordSlugRelease(oldSlug, input.creatorId);
   }
 
   await cacheInvalidate(`creator:${oldSlug}`);

@@ -63,13 +63,13 @@ function operation({
     responses: {
       [successStatus]: success,
       "429": rateLimited,
-      ...extraResponses,
       ...(secured && {
         "401": json(
           "Missing or invalid bearer token.",
           schema("ErrorResponse"),
         ),
       }),
+      ...extraResponses,
     },
   };
 }
@@ -393,6 +393,13 @@ export const openApiSpecification = {
         summary: "Get a creator tip-page QR code as SVG",
         success: {
           description: "QR code image.",
+          headers: {
+            "Cache-Control": {
+              description:
+                "Caching directive for the generated QR code (`public, max-age=3600`).",
+              schema: { type: "string" },
+            },
+          },
           content: { "image/svg+xml": { schema: { type: "string" } } },
         },
         parameters: [validatedSlugParameter],
@@ -408,6 +415,18 @@ export const openApiSpecification = {
         summary: "Download a creator tip-page QR code as PNG",
         success: {
           description: "PNG QR code image.",
+          headers: {
+            "Cache-Control": {
+              description:
+                "Caching directive for the generated QR code (`public, max-age=3600`).",
+              schema: { type: "string" },
+            },
+            "Content-Disposition": {
+              description:
+                'Download filename (`attachment; filename="novatip-{slug}.png"`).',
+              schema: { type: "string" },
+            },
+          },
           content: {
             "image/png": { schema: { type: "string", format: "binary" } },
           },
@@ -509,6 +528,18 @@ export const openApiSpecification = {
           "Streams every tip for the authenticated creator as a CSV attachment. Also reachable as /analytics/csv, /analytics/recent.csv, /analytics/export.csv, /analytics/tips.csv and /analytics/history.csv — documented aliases of this same endpoint (see documentedRouteAliases in openapi.ts).",
         success: {
           description: "CSV file of the creator's tip history.",
+          headers: {
+            "Content-Disposition": {
+              description:
+                'Download filename (`attachment; filename="{slug}-tip-history.csv"`).',
+              schema: { type: "string" },
+            },
+            "Cache-Control": {
+              description:
+                "Caching directive opting out of caching (`no-store`).",
+              schema: { type: "string" },
+            },
+          },
           content: { "text/csv": { schema: { type: "string" } } },
         },
         secured: true,
@@ -549,7 +580,28 @@ export const openApiSpecification = {
             default: 20,
           }),
           paginationParameters[1]!,
+          queryParameter("unread", "Filter to unread notifications only.", {
+            type: "boolean",
+          }),
+          queryParameter("cursor", "Opaque cursor for pagination.", {
+            type: "string",
+            minLength: 1,
+          }),
         ],
+        secured: true,
+        extraResponses: { "400": validationError },
+      }),
+    },
+    "/notifications/read": {
+      post: operation({
+        summary: "Mark notifications as read",
+        description:
+          "Mark specific notifications or all notifications as read. Provide either 'notificationIds' (an array of notification IDs) or 'all: true', but not both.",
+        success: json(
+          "Number of notifications marked as read.",
+          schema("MarkNotificationsReadResponse"),
+        ),
+        requestBody: requestBody(schema("MarkNotificationsReadRequest")),
         secured: true,
         extraResponses: { "400": validationError },
       }),
@@ -644,6 +696,14 @@ export const openApiSpecification = {
             default: 20,
           }),
           paginationParameters[1]!,
+          queryParameter(
+            "success",
+            "Filter delivery attempts by outcome (`true` or `false`).",
+            {
+              type: "string",
+              enum: ["true", "false"],
+            },
+          ),
         ],
         secured: true,
         extraResponses: {
@@ -1342,6 +1402,8 @@ export const openApiSpecification = {
           },
           sent: { type: "boolean" },
           sentAt: { type: "string", format: "date-time", nullable: true },
+          read: { type: "boolean" },
+          readAt: { type: "string", format: "date-time", nullable: true },
           createdAt: { type: "string", format: "date-time" },
         },
         required: [
@@ -1350,6 +1412,8 @@ export const openApiSpecification = {
           "payload",
           "sent",
           "sentAt",
+          "read",
+          "readAt",
           "createdAt",
         ],
       },
@@ -1357,8 +1421,10 @@ export const openApiSpecification = {
         type: "object",
         properties: {
           notifications: { type: "array", items: schema("Notification") },
+          unreadCount: { type: "integer" },
+          nextCursor: { type: "string", nullable: true },
         },
-        required: ["notifications"],
+        required: ["notifications", "unreadCount", "nextCursor"],
       },
       NotificationPreferences: {
         type: "object",
@@ -1385,6 +1451,32 @@ export const openApiSpecification = {
           },
         },
         required: ["preferences"],
+      },
+      MarkNotificationsReadRequest: {
+        type: "object",
+        properties: {
+          notificationIds: {
+            type: "array",
+            items: { type: "string" },
+            description: "Array of notification IDs to mark as read.",
+          },
+          all: {
+            type: "boolean",
+            description: "Set to true to mark all notifications as read.",
+          },
+        },
+        description:
+          "Must provide either 'notificationIds' or 'all: true', but not both.",
+      },
+      MarkNotificationsReadResponse: {
+        type: "object",
+        properties: {
+          markedRead: {
+            type: "integer",
+            description: "Number of notifications marked as read.",
+          },
+        },
+        required: ["markedRead"],
       },
     },
   },

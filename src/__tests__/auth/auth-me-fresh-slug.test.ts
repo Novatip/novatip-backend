@@ -86,6 +86,7 @@ const transactionMock = jest.fn(
       releasedSlug: { upsert: jest.fn(async () => ({})) },
     }),
 );
+const tipUpdateManyMock = jest.fn(async () => ({ count: 0 }));
 const revokedCreatorIds = new Set<string>();
 // authRoutes registers the shared Redis-backed rate limiter.
 const rateLimitRedis = createRateLimitRedisMock();
@@ -104,7 +105,7 @@ jest.unstable_mockModule("../../db.js", () => ({
       findUnique: jest.fn(async () => null),
       upsert: jest.fn(async () => null),
     },
-    tip: { updateMany: jest.fn(async () => ({ count: 0 })) },
+    tip: { updateMany: tipUpdateManyMock },
   },
   disconnectDb: async (): Promise<void> => undefined,
 }));
@@ -139,6 +140,7 @@ describe("GET /auth/me fresh slug and authentication", () => {
   const INITIAL_SLUG = "user_1a2b3c4d";
 
   beforeEach(async () => {
+    tipUpdateManyMock.mockClear();
     revokedCreatorIds.clear();
     creatorsDb = new Map<string, CreatorRecord>();
     creatorsDb.set(CREATOR_ID, {
@@ -194,9 +196,22 @@ describe("GET /auth/me fresh slug and authentication", () => {
       },
     });
 
+    expect(tipUpdateManyMock).not.toHaveBeenCalled();
+
     // Creator claims a real slug
     const claimedSlug = "alice_wonder";
     await claimSlug({ creatorId: CREATOR_ID, slug: claimedSlug });
+
+    expect(tipUpdateManyMock).toHaveBeenCalledTimes(1);
+    expect(tipUpdateManyMock).toHaveBeenCalledWith({
+      where: {
+        jarId: `@${claimedSlug}`,
+        creatorId: null,
+      },
+      data: {
+        creatorId: CREATOR_ID,
+      },
+    });
 
     // Calling /auth/me with the SAME initial token must reflect the newly claimed slug
     const freshRes = await app.inject({
@@ -218,6 +233,7 @@ describe("GET /auth/me fresh slug and authentication", () => {
   });
 
   test("returns 401 when the creator no longer exists in the database", async () => {
+    expect(tipUpdateManyMock).not.toHaveBeenCalled();
     const token = app.jwt.sign({
       sub: "creator_deleted_or_unknown",
       wallet: WALLET,

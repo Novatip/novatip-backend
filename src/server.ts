@@ -150,9 +150,19 @@ export async function buildServer(
   });
 
   // ── Global error handler ──────────────────────────────────────────────────
+  const CLIENT_ERROR_CODES: Record<number, string> = {
+    400: "BAD_REQUEST",
+    401: "UNAUTHORIZED",
+    403: "FORBIDDEN",
+    404: "NOT_FOUND",
+    409: "CONFLICT",
+    429: "TOO_MANY_REQUESTS",
+  };
+
   server.setErrorHandler((error, request, reply) => {
     const statusCode = error.statusCode ?? 500;
     const isServerError = statusCode >= 500;
+    const isClientError = statusCode >= 400 && statusCode < 500;
 
     if (isServerError) {
       server.log.error({ err: error, url: request.url }, "Server error");
@@ -160,9 +170,16 @@ export async function buildServer(
       server.log.warn({ err: error, url: request.url }, "Client error");
     }
 
+    const fallbackCode = isClientError
+      ? (CLIENT_ERROR_CODES[statusCode] ?? "CLIENT_ERROR")
+      : "INTERNAL_SERVER_ERROR";
+
     reply.status(statusCode).send({
       error: {
-        code: isProduction && isServerError ? "INTERNAL_SERVER_ERROR" : (error.code ?? "INTERNAL_SERVER_ERROR"),
+        code:
+          isProduction && isServerError
+            ? "INTERNAL_SERVER_ERROR"
+            : (error.code ?? fallbackCode),
         message:
           isProduction && isServerError
             ? "An unexpected error occurred."

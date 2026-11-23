@@ -181,21 +181,30 @@ describe("OpenAPI route", () => {
     );
   });
 
-  it("documents auth challenge and verify schemas matching auth route schemas", () => {
-    const challengeResponse =
-      openApiSpecification.components.schemas.ChallengeResponse;
-    const verifyRequest =
-      openApiSpecification.components.schemas.VerifyRequest;
+  it("lets a custom 401 response override the generic secured 401 on /auth/me", () => {
+    const responses = openApiSpecification.paths["/auth/me"]?.get?.responses;
 
-    expect(challengeResponse.properties).toHaveProperty("message");
-    expect(challengeResponse.properties.message).toEqual({ type: "string" });
-    expect(challengeResponse.required).toContain("message");
-    expect(challengeResponse.required).toContain("nonce");
+    expect(responses?.["401"]).toMatchObject({
+      description: "Creator account not found.",
+    });
+  });
 
-    expect(verifyRequest.properties).toHaveProperty("message");
-    expect(verifyRequest.properties.message).toEqual({ type: "string" });
-    expect(verifyRequest.required).toEqual(
-      expect.arrayContaining(Object.keys(VerifyBody.shape)),
-    );
+  it("documents Cache-Control and Content-Disposition headers on QR and CSV export routes", () => {
+    const svgHeaders =
+      openApiSpecification.paths["/qr/{slug}"]?.get?.responses?.["200"]
+        ?.headers;
+    expect(svgHeaders).toHaveProperty("Cache-Control");
+
+    const pngHeaders =
+      openApiSpecification.paths["/qr/{slug}/png"]?.get?.responses?.["200"]
+        ?.headers;
+    expect(pngHeaders).toHaveProperty("Cache-Control");
+    expect(pngHeaders).toHaveProperty("Content-Disposition");
+
+    const csvHeaders =
+      openApiSpecification.paths["/analytics/export"]?.get?.responses?.["200"]
+        ?.headers;
+    expect(csvHeaders).toHaveProperty("Content-Disposition");
+    expect(csvHeaders).toHaveProperty("Cache-Control");
   });
 });

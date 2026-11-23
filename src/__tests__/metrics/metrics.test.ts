@@ -88,6 +88,7 @@ describe('Metrics endpoint', () => {
       expect(body).toContain('novatip_indexer_last_successful_poll_timestamp');
       expect(body).toContain('novatip_tips_indexed_total');
       expect(body).toContain('novatip_webhook_deliveries_total');
+      expect(body).toContain('novatip_webhook_decrypt_errors_total');
       expect(body).toContain('novatip_webhook_delivery_duration_seconds');
       expect(body).toContain('novatip_http_request_duration_seconds');
       expect(body).toContain('novatip_http_requests_total');

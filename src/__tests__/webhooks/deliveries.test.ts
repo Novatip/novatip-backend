@@ -42,6 +42,7 @@ const {
   listWebhookDeliveries,
   dispatchWebhooks,
   deleteWebhook,
+  WEBHOOK_SECRET_DECRYPT_FAILED_CODE,
   DEFAULT_DELIVERY_PAGE_SIZE,
   MAX_DELIVERY_PAGE_SIZE,
 } = await import("../../modules/webhooks/webhooks.service.js");
@@ -296,6 +297,25 @@ describe("history of a dispatch that failed", () => {
     // honestly, and the transport error lands in `response` instead.
     expect(rows?.[0]).toMatchObject({ statusCode: null, success: false });
     expect(rows?.[0]?.response).toContain("ECONNREFUSED");
+  });
+
+  it("records a distinct decrypt failure when secret decryption fails", async () => {
+    fake.seedCreator({ id: CREATOR, jarId: "@alice" });
+    const webhook = fake.seedWebhook({
+      creatorId: CREATOR,
+      secret: "novatip:v1:corrupted:tag:ciphertext",
+    });
+
+    await dispatchWebhooks(tip);
+    const rows = await listWebhookDeliveries(CREATOR, webhook.id);
+
+    expect(rows?.[0]).toMatchObject({
+      statusCode: null,
+      success: false,
+      response: WEBHOOK_SECRET_DECRYPT_FAILED_CODE,
+    });
+    expect(rows?.[0]?.response).not.toContain("Error");
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 
   it("truncates an oversized payload before storing the delivery row", async () => {

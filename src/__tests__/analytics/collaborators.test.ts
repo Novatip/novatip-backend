@@ -156,6 +156,53 @@ describe("parseSplits", () => {
       ).toThrow(/splits\[1\]\.bps/);
     });
   });
+
+  describe("sum validation", () => {
+    it("rejects splits that sum to more than 10000 bps", () => {
+      expect(() =>
+        parseSplits([
+          { to: ALICE, bps: 6_000 },
+          { to: BOB, bps: 6_000 },
+        ]),
+      ).toThrow(/splits sum to 12000 bps/);
+      expect(() =>
+        parseSplits([
+          { to: ALICE, bps: 6_000 },
+          { to: BOB, bps: 6_000 },
+        ]),
+      ).toThrow(/exceeds the maximum 10000/);
+    });
+
+    it("accepts splits that sum to exactly 10000 bps", () => {
+      expect(
+        parseSplits([
+          { to: ALICE, bps: 5_000 },
+          { to: BOB, bps: 5_000 },
+        ]),
+      ).toEqual([
+        { to: ALICE, bps: 5_000 },
+        { to: BOB, bps: 5_000 },
+      ]);
+    });
+
+    it("accepts splits that sum to less than 10000 bps", () => {
+      expect(
+        parseSplits([
+          { to: ALICE, bps: 3_000 },
+          { to: BOB, bps: 2_000 },
+        ]),
+      ).toHaveLength(2);
+    });
+
+    it("reports the sum validation error as a 500", () => {
+      expect(() =>
+        parseSplits([
+          { to: ALICE, bps: 10_000 },
+          { to: BOB, bps: 1 },
+        ]),
+      ).toThrow(expect.objectContaining({ statusCode: 500 }) as Error);
+    });
+  });
 });
 
 // ── Share formatting ──────────────────────────────────────────────────────────
@@ -407,5 +454,22 @@ describe("getCollaboratorEarnings", () => {
       "statusCode",
       404,
     );
+  });
+
+  it("rejects stored splits summing over 10000 bps with a 500", async () => {
+    creatorRow = {
+      walletAddress: OWNER,
+      splits: [
+        { to: ALICE, bps: 6_000 },
+        { to: BOB, bps: 6_000 },
+      ],
+      updatedAt: SPLITS_UPDATED_AT,
+    };
+    tips = [10_000_000n];
+
+    await expect(getCollaboratorEarnings(CREATOR_ID)).rejects.toMatchObject({
+      statusCode: 500,
+      code: "MALFORMED_SPLITS",
+    });
   });
 });
