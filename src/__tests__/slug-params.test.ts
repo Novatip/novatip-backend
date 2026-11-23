@@ -51,9 +51,10 @@ describe("slug route parameter validation", () => {
     jest.clearAllMocks();
   });
 
-  it("rejects malformed slugs on all five routes before cache or database access", async () => {
+  it("rejects malformed slugs on all six routes before cache or database access", async () => {
     const urls = [
       "/creators/!!",
+      "/creators/check/!!",
       "/resolve/!!",
       "/qr/!!",
       "/qr/!!/png",

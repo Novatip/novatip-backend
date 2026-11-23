@@ -99,7 +99,8 @@ export const creatorRoutes: FastifyPluginAsync = async (app) => {
 
   // ── GET /check/:slug — availability ───────────────────────────────────────
   app.get("/check/:slug", async (request, reply) => {
-    const { slug } = request.params as { slug: string };
+    const slug = validateSlugParam(request.params, reply);
+    if (slug === null) return;
 
     // The endpoint stays public, but identity matters here: a released slug
     // is held for its previous owner, and only a token proves the caller is

@@ -4,6 +4,11 @@
   "description": "Novatip backend — creator profiles, tip indexer, analytics, and notifications",
   "author": "Novatip",
   "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/Novatip/novatip-backend.git" },
+  "bugs": {
+    "url": "https://github.com/Novatip/novatip-backend/issues"
+  },
+  "homepage": "https://github.com/Novatip/novatip-backend#readme",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/app.ts",
