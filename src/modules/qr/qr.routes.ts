@@ -51,6 +51,13 @@ export const qrRoutes: FastifyPluginAsync = async (app) => {
       hook: "preHandler",
     });
 
+    // Override Helmet's default `Cross-Origin-Resource-Policy: same-origin`
+    // in an onSend hook so it runs after @fastify/helmet's root onSend hook.
+    // QR codes are intentionally public for embedding via <img> on any origin.
+    qrApp.addHook("onSend", async (_request, reply) => {
+      reply.header("Cross-Origin-Resource-Policy", "cross-origin");
+    });
+
     // ── GET /:slug — SVG ─────────────────────────────────────────────────────
     qrApp.get("/:slug", async (request, reply) => {
       const slug = validateSlugParam(request.params, reply);

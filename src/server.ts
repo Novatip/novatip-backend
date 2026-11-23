@@ -62,6 +62,7 @@ export async function buildServer(
   await server.register(cors, {
     origin: isProduction ? config.corsAllowedOrigins : true,
     credentials: true,
+    exposedHeaders: ["Content-Disposition"],
   });
 
   await server.register(rateLimit, {
