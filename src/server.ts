@@ -49,7 +49,15 @@ export async function buildServer(
   }
 
   // ── Security plugins ──────────────────────────────────────────────────────
-  await server.register(helmet, { contentSecurityPolicy: false });
+  await server.register(helmet, {
+    contentSecurityPolicy: {
+      useDefaults: false,
+      directives: {
+        defaultSrc: ["'none'"],
+        frameAncestors: ["'none'"],
+      },
+    },
+  });
 
   await server.register(cors, {
     origin: isProduction ? config.corsAllowedOrigins : true,
@@ -65,7 +73,8 @@ export async function buildServer(
   // ── Auth plugin ───────────────────────────────────────────────────────────
   await server.register(jwt, {
     secret: config.jwtSecret,
-    sign: { expiresIn: config.jwtExpiresIn },
+    sign: { algorithm: "HS256", expiresIn: config.jwtExpiresIn },
+    verify: { algorithms: ["HS256"] },
   });
 
   // ── Decorators ────────────────────────────────────────────────────────────

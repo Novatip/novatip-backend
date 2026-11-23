@@ -1,4 +1,4 @@
-import { isValidAccountId } from "@novatip/sdk";
+import { StrKey } from "@stellar/stellar-sdk";
 import { z } from "zod";
 
 export const MAX_CREATOR_SPLITS = 50;
@@ -6,9 +6,11 @@ export const MAX_CREATOR_SPLITS = 50;
 export const CreatorSplitsSchema = z
   .array(
     z.object({
-      to: z.string().refine(isValidAccountId, {
-        message: "Must be a valid Stellar account address.",
-      }),
+      to: z
+        .string()
+        .refine((address) => StrKey.isValidEd25519PublicKey(address), {
+          message: "Must be a valid Stellar account address.",
+        }),
       bps: z.number().int().min(1).max(10_000),
     }),
   )

@@ -26,6 +26,7 @@ const findUniqueMock = jest.fn(async () => ({
 const createMock = jest.fn();
 const consumeAuthNonceMock =
   jest.fn<(walletAddress: string) => Promise<string | null>>();
+const setAuthNonceMock = jest.fn(async () => undefined);
 
 jest.unstable_mockModule("../../db.js", () => ({
   db: {
@@ -39,11 +40,13 @@ jest.unstable_mockModule("../../db.js", () => ({
 
 jest.unstable_mockModule("../../redis.js", () => ({
   consumeAuthNonce: consumeAuthNonceMock,
-  setAuthNonce: jest.fn(async () => undefined),
+  setAuthNonce: setAuthNonceMock,
   disconnectRedis: async (): Promise<void> => undefined,
 }));
 
-const { verifyChallenge } = await import("../../modules/auth/auth.service.js");
+const { generateChallenge, verifyChallenge } = await import(
+  "../../modules/auth/auth.service.js"
+);
 
 describe("verifyChallenge rejection branches (#247)", () => {
   const kp = Keypair.random();
@@ -101,6 +104,38 @@ describe("verifyChallenge rejection branches (#247)", () => {
       statusCode: 400,
     });
 
+    expect(consumeAuthNonceMock).not.toHaveBeenCalled();
+    expect(findUniqueMock).not.toHaveBeenCalled();
+    expect(createMock).not.toHaveBeenCalled();
+    expect(signJwtMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a shape-valid, checksum-invalid Stellar address with 400 in both generateChallenge and verifyChallenge", async () => {
+    const badChecksumAddress = `G${"A".repeat(55)}`;
+    expect(badChecksumAddress).toMatch(/^G[A-Z2-7]{55}$/);
+
+    await expect(
+      generateChallenge(badChecksumAddress, "localhost:3000"),
+    ).rejects.toMatchObject({
+      code: "INVALID_ACCOUNT",
+      message: "Invalid Stellar account address.",
+      statusCode: 400,
+    });
+    expect(setAuthNonceMock).not.toHaveBeenCalled();
+
+    const message = buildChallengeMessage({
+      walletAddress: badChecksumAddress,
+      nonce,
+    });
+    const sig = signSep53Message(kp, message);
+
+    await expect(
+      verifyChallenge(badChecksumAddress, message, sig, signJwtMock),
+    ).rejects.toMatchObject({
+      code: "INVALID_ACCOUNT",
+      message: "Invalid Stellar account address.",
+      statusCode: 400,
+    });
     expect(consumeAuthNonceMock).not.toHaveBeenCalled();
     expect(findUniqueMock).not.toHaveBeenCalled();
     expect(createMock).not.toHaveBeenCalled();

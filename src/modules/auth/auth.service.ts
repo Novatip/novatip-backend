@@ -20,7 +20,6 @@ import { StrKey } from "@stellar/stellar-sdk";
 import { setAuthNonce, consumeAuthNonce } from "../../redis.js";
 import { db } from "../../db.js";
 import { config } from "../../config.js";
-import { isValidAccountId } from "@novatip/sdk";
 import { jarIdForSlug } from "../creator/jar-id.js";
 
 /** Maximum attempts to generate an uncollided temporary slug/jarId for new creators. */
@@ -97,7 +96,7 @@ export async function generateChallenge(
   walletAddress: string,
   domain: string = getExpectedAuthDomain(),
 ): Promise<ChallengeMessage> {
-  if (!isValidAccountId(walletAddress)) {
+  if (!StrKey.isValidEd25519PublicKey(walletAddress)) {
     throw authError(400, "INVALID_ACCOUNT", "Invalid Stellar account address.");
   }
 
@@ -148,7 +147,7 @@ export async function verifyChallenge(
   signatureHex: string,
   signJwt: (payload: SessionClaims) => string,
 ): Promise<VerifyResult> {
-  if (!isValidAccountId(walletAddress)) {
+  if (!StrKey.isValidEd25519PublicKey(walletAddress)) {
     throw authError(400, "INVALID_ACCOUNT", "Invalid Stellar account address.");
   }
 
