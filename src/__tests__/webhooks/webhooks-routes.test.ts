@@ -209,6 +209,19 @@ describe("PATCH /:id", () => {
     expect(setWebhookEnabledMock).not.toHaveBeenCalled();
   });
 
+  it("returns 400 naming the field when the body also contains url", async () => {
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/${WEBHOOK_ID}`,
+      headers: authHeaders(),
+      payload: { enabled: true, url: "https://hooks.example.com/fixed" },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(JSON.stringify(res.json().error)).toContain("url");
+    expect(setWebhookEnabledMock).not.toHaveBeenCalled();
+  });
+
   it("returns 404 for a missing or not-owned webhook", async () => {
     setWebhookEnabledMock.mockResolvedValueOnce(null);
 

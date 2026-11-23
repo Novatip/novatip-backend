@@ -298,6 +298,7 @@ export async function claimSlug(input: ClaimSlugInput) {
   }
 
   await cacheInvalidate(`creator:${input.slug}`);
+  await cacheInvalidate(`analytics:collaborators:${creator.id}`);
   return creator;
 }
 
@@ -623,6 +624,7 @@ export async function updateCreatorSplits(
   }
 
   await cacheInvalidate(`creator:${creator.slug}`);
+  await cacheInvalidate(`analytics:collaborators:${creator.id}`);
   return creator;
 }
 
