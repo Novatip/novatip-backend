@@ -65,7 +65,8 @@ export async function buildServer(
   // ── Auth plugin ───────────────────────────────────────────────────────────
   await server.register(jwt, {
     secret: config.jwtSecret,
-    sign: { expiresIn: config.jwtExpiresIn },
+    sign: { algorithm: "HS256", expiresIn: config.jwtExpiresIn },
+    verify: { algorithms: ["HS256"] },
   });
 
   // ── Decorators ────────────────────────────────────────────────────────────
