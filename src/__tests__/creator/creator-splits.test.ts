@@ -1,14 +1,20 @@
+import { Keypair } from "@stellar/stellar-sdk";
 import {
   CreatorSplitsSchema,
   MAX_CREATOR_SPLITS,
 } from "../../modules/creator/creator-splits.schema.js";
 
-const RECIPIENT = `G${"A".repeat(55)}`;
-const SECOND_RECIPIENT = `G${"B".repeat(55)}`;
+const RECIPIENT = Keypair.random().publicKey();
+const SECOND_RECIPIENT = Keypair.random().publicKey();
+const SHAPE_VALID_BAD_CHECKSUM = `G${"A".repeat(55)}`;
 
 describe("CreatorSplitsSchema", () => {
   test.each([
     ["an invalid Stellar address", [{ to: "not-an-address", bps: 5_000 }]],
+    [
+      "a shape-valid Stellar address with an invalid StrKey checksum",
+      [{ to: SHAPE_VALID_BAD_CHECKSUM, bps: 5_000 }],
+    ],
     ["fractional basis points", [{ to: RECIPIENT, bps: 1.5 }]],
     ["string basis points", [{ to: RECIPIENT, bps: "5000" }]],
     ["zero basis points", [{ to: RECIPIENT, bps: 0 }]],
