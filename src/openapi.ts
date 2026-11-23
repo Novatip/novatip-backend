@@ -435,10 +435,10 @@ export const openApiSpecification = {
           validatedSlugParameter,
           queryParameter(
             "width",
-            "PNG image width in pixels (64–2048, default 512).",
+            "PNG image width in pixels (256–2048, default 512).",
             {
               type: "integer",
-              minimum: 64,
+              minimum: 256,
               maximum: 2048,
               default: 512,
             },
