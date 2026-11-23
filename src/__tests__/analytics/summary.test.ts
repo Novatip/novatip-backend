@@ -249,4 +249,45 @@ describe("getTopSupporters", () => {
     expect(queryRaw).not.toHaveBeenCalled();
     expect(cacheSet).not.toHaveBeenCalled();
   });
+
+  it("clamps out-of-range limits and floors floats before querying", async () => {
+    queryRows = [];
+
+    await getTopSupporters(CREATOR_ID, 0);
+    expect(queryRaw.mock.calls[0]?.[2]).toBe(1);
+
+    await getTopSupporters(CREATOR_ID, -5);
+    expect(queryRaw.mock.calls[1]?.[2]).toBe(1);
+
+    await getTopSupporters(CREATOR_ID, 500);
+    expect(queryRaw.mock.calls[2]?.[2]).toBe(100);
+    expect(cacheGet).toHaveBeenLastCalledWith(
+      `analytics:top:${CREATOR_ID}:100`,
+    );
+
+    await getTopSupporters(CREATOR_ID, 7.8);
+    expect(queryRaw.mock.calls[3]?.[2]).toBe(7);
+
+    await getTopSupporters(CREATOR_ID, 42);
+    expect(queryRaw.mock.calls[4]?.[2]).toBe(42);
+  });
+
+  it("falls back to 10 for NaN, Infinity, null, and handles numeric strings", async () => {
+    queryRows = [];
+
+    await getTopSupporters(CREATOR_ID, Number.NaN);
+    expect(queryRaw.mock.calls[0]?.[2]).toBe(10);
+
+    await getTopSupporters(CREATOR_ID, Number.POSITIVE_INFINITY);
+    expect(queryRaw.mock.calls[1]?.[2]).toBe(10);
+
+    await getTopSupporters(CREATOR_ID, Number.NEGATIVE_INFINITY);
+    expect(queryRaw.mock.calls[2]?.[2]).toBe(10);
+
+    await getTopSupporters(CREATOR_ID, null as unknown as number);
+    expect(queryRaw.mock.calls[3]?.[2]).toBe(10);
+
+    await getTopSupporters(CREATOR_ID, "25" as unknown as number);
+    expect(queryRaw.mock.calls[4]?.[2]).toBe(25);
+  });
 });

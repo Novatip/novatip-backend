@@ -154,4 +154,68 @@ describe("getTimeSeries", () => {
     expect(queryRaw).not.toHaveBeenCalled();
     expect(cacheSet).not.toHaveBeenCalled();
   });
+
+  it("clamps out-of-range days and floors floats before querying", async () => {
+    const zero = await getTimeSeries("creator-1", 0);
+    expect(zero).toHaveLength(1);
+    expect(queryRaw.mock.calls[0]?.[2]).toEqual(
+      new Date("2026-03-01T00:00:00.000Z"),
+    );
+
+    const negative = await getTimeSeries("creator-1", -5);
+    expect(negative).toHaveLength(1);
+    expect(queryRaw.mock.calls[1]?.[2]).toEqual(
+      new Date("2026-03-01T00:00:00.000Z"),
+    );
+
+    const overMax = await getTimeSeries("creator-1", 500);
+    expect(overMax).toHaveLength(365);
+    expect(cacheGet).toHaveBeenLastCalledWith(
+      "analytics:timeseries:creator-1:365",
+    );
+
+    const floated = await getTimeSeries("creator-1", 4.9);
+    expect(floated).toHaveLength(4);
+    expect(queryRaw.mock.calls[3]?.[2]).toEqual(
+      new Date("2026-02-26T00:00:00.000Z"),
+    );
+
+    const inRange = await getTimeSeries("creator-1", 14);
+    expect(inRange).toHaveLength(14);
+    expect(cacheGet).toHaveBeenLastCalledWith(
+      "analytics:timeseries:creator-1:14",
+    );
+  });
+
+  it("falls back to 30 days for NaN, Infinity, null, and handles numeric strings", async () => {
+    const nanSeries = await getTimeSeries("creator-1", Number.NaN);
+    expect(nanSeries).toHaveLength(30);
+    expect(cacheGet).toHaveBeenLastCalledWith(
+      "analytics:timeseries:creator-1:30",
+    );
+
+    const infSeries = await getTimeSeries("creator-1", Number.POSITIVE_INFINITY);
+    expect(infSeries).toHaveLength(30);
+
+    const negInfSeries = await getTimeSeries(
+      "creator-1",
+      Number.NEGATIVE_INFINITY,
+    );
+    expect(negInfSeries).toHaveLength(30);
+
+    const nullSeries = await getTimeSeries(
+      "creator-1",
+      null as unknown as number,
+    );
+    expect(nullSeries).toHaveLength(30);
+
+    const strSeries = await getTimeSeries(
+      "creator-1",
+      "7" as unknown as number,
+    );
+    expect(strSeries).toHaveLength(7);
+    expect(cacheGet).toHaveBeenLastCalledWith(
+      "analytics:timeseries:creator-1:7",
+    );
+  });
 });
