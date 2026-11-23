@@ -159,3 +159,32 @@ export async function cacheInvalidate(key: string): Promise<void> {
     redisLogger.warn({ err, key: fullKey }, "failed to invalidate cache entry");
   }
 }
+
+/**
+ * Invalidate all cache entries whose unprefixed key starts with `prefix`.
+ * Uses cursor-based SCAN so Redis is never blocked by a full keyspace scan.
+ */
+export async function cacheInvalidatePrefix(prefix: string): Promise<void> {
+  const match = `cache:${prefix}*`;
+  try {
+    let cursor = "0";
+    do {
+      const [nextCursor, keys] = await redis.scan(
+        cursor,
+        "MATCH",
+        match,
+        "COUNT",
+        100,
+      );
+      cursor = nextCursor;
+      if (keys.length > 0) {
+        await redis.del(...keys);
+      }
+    } while (cursor !== "0");
+  } catch (err) {
+    redisLogger.warn(
+      { err, match },
+      "failed to invalidate cache entries by prefix",
+    );
+  }
+}
