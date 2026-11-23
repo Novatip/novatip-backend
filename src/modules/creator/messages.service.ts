@@ -6,7 +6,7 @@
  */
 
 import { db } from "../../db.js";
-import { cacheInvalidate } from "../../redis.js";
+import { cacheInvalidatePrefix } from "../../redis.js";
 
 /**
  * Set the messageHidden flag for a tip.
@@ -29,33 +29,18 @@ export async function setTipMessageHidden(
     select: { id: true, messageHidden: true },
   });
 
-  // Invalidate public feed cache
+  // Invalidate both the creator's private recent-tips cache and the public
+  // feed cache across all limits and cursors.
+  await cacheInvalidatePrefix(`analytics:recent:${creatorId}:`);
+
   const creator = await db.creator.findUnique({
     where: { id: creatorId },
     select: { slug: true },
   });
 
   if (creator) {
-    await invalidatePublicFeedCache(creator.slug);
+    await cacheInvalidatePrefix(`analytics:public-recent:${creator.slug}:`);
   }
 
   return tip;
-}
-
-/**
- * Invalidate all cached public feed pages for a creator's slug.
- * This ensures hidden messages disappear promptly from the public view.
- */
-async function invalidatePublicFeedCache(slug: string): Promise<void> {
-  // Delete all cache keys matching analytics:public-recent:{slug}:*
-  // Since we don't have a pattern-based delete, we'll delete common cursors
-  // The 15-second TTL means stale cached entries expire quickly anyway
-  const commonKeys = [
-    `analytics:public-recent:${slug}:20:head`,
-    `analytics:public-recent:${slug}:50:head`,
-  ];
-
-  for (const key of commonKeys) {
-    await cacheInvalidate(key);
-  }
 }
