@@ -415,7 +415,8 @@ type TipHistoryCsvRow = {
 export async function* streamTipHistoryCsv(
   creatorId: string,
 ): AsyncGenerator<string> {
-  yield "id,txHash,fromAddress,amount,message,ledgerAt\n";
+  // UTF-8 BOM so Excel on Windows detects the encoding of non-ASCII messages.
+  yield "\uFEFFid,txHash,fromAddress,amount,message,ledgerAt\n";
 
   const rowsPerBatch = 500;
   let after: { ledgerAt: Date; id: string } | null = null;

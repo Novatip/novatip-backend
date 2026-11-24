@@ -160,7 +160,7 @@ function processDeliveryQueue(): void {
 }
 
 function queueDelivery(
-  webhook: { id: string; url: string; secret: string },
+  webhook: { id: string; url: string },
   body: string,
   payload: DeliveryPayload,
 ): Promise<DeliveryOutcome> {
@@ -286,19 +286,32 @@ export async function dispatchWebhooks(event: TipEvent): Promise<void> {
  * Unexpected errors may still propagate to callers.
  */
 async function deliver(
-  webhook: { id: string; url: string; secret: string },
+  webhook: { id: string; url: string },
   body: string,
   payload: DeliveryPayload,
 ): Promise<DeliveryOutcome> {
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const startTime = Date.now();
 
+  // The secret is read now, at send time, never carried in the queued job: a
+  // rotation between enqueue and send must sign with the new secret. Both
+  // dispatch and the test ping go through here.
   let secret: string;
   try {
-    secret = decryptWebhookSecret(
-      webhook.secret,
-      getWebhookEncryptionKey(),
-    );
+    const current = await db.webhook.findUnique({
+      where: { id: webhook.id },
+      select: { secret: true },
+    });
+    if (!current) {
+      // Deleted while queued: nothing to sign with and no row to record on.
+      return {
+        statusCode: null,
+        success: false,
+        response: "WEBHOOK_NOT_FOUND",
+        attemptedAt: new Date(startTime),
+      };
+    }
+    secret = decryptWebhookSecret(current.secret, getWebhookEncryptionKey());
   } catch (err) {
     webhookLogger.error(
       { err, webhookId: webhook.id },
@@ -562,9 +575,9 @@ export async function sendTestPing(
 ): Promise<DeliveryOutcome | null> {
   const webhook = await db.webhook.findFirst({
     where: { id: webhookId, creatorId },
-    // The one place the secret is read back out — it is needed to sign, and
-    // never leaves this function.
-    select: { id: true, url: true, secret: true },
+    // The secret is deliberately not read here: deliver() fetches it at send
+    // time so a rotation while the ping is queued is honoured.
+    select: { id: true, url: true },
   });
 
   if (!webhook) return null;
@@ -709,27 +722,38 @@ export async function rotateWebhookSecrets(
  * error.code on the rejection, so clients can branch on it.
  */
 export const WEBHOOK_SECRET_TOO_SHORT_CODE = "WEBHOOK_SECRET_TOO_SHORT";
+export const WEBHOOK_SECRET_TOO_LONG_CODE = "WEBHOOK_SECRET_TOO_LONG";
 
 /**
- * Floor on a caller-supplied signing secret. The signature is the only thing
- * telling a receiver a delivery really came from Novatip, so a one-character
- * secret would make that guarantee worthless against even a casual guess.
- * Below this, the route rejects the request rather than the service writing
- * a secret too weak to trust — checked here, not only in the route's input
- * schema, so nothing that calls createWebhook or rotateWebhookSecret directly
- * can skip it.
+ * The signing key needs enough characters to resist guessing but a finite
+ * ceiling to keep encrypted storage and HMAC inputs bounded. Both bounds are
+ * checked here as well as in the route schema so direct callers cannot skip
+ * them.
  */
 export const MIN_WEBHOOK_SECRET_LENGTH = 16;
 
+/** Upper bound on caller-supplied signing secrets. */
+export const MAX_WEBHOOK_SECRET_LENGTH = 256;
+
 function assertSecretLength(secret: string): void {
-  if (secret.length >= MIN_WEBHOOK_SECRET_LENGTH) return;
+  if (secret.length < MIN_WEBHOOK_SECRET_LENGTH) {
+    throw Object.assign(
+      new Error(
+        `Webhook secret must be at least ${MIN_WEBHOOK_SECRET_LENGTH} ` +
+          `characters long.`,
+      ),
+      { statusCode: 400, code: WEBHOOK_SECRET_TOO_SHORT_CODE },
+    );
+  }
+
+  if (secret.length <= MAX_WEBHOOK_SECRET_LENGTH) return;
 
   throw Object.assign(
     new Error(
-      `Webhook secret must be at least ${MIN_WEBHOOK_SECRET_LENGTH} ` +
+      `Webhook secret must be at most ${MAX_WEBHOOK_SECRET_LENGTH} ` +
         `characters long.`,
     ),
-    { statusCode: 400, code: WEBHOOK_SECRET_TOO_SHORT_CODE },
+    { statusCode: 400, code: WEBHOOK_SECRET_TOO_LONG_CODE },
   );
 }
 
@@ -757,6 +781,7 @@ export async function createWebhook(
   if (limit === null) {
     return db.webhook.create({
       data: { creatorId, url, secret: encryptedSecret },
+      select: webhookSelect,
     });
   }
 
@@ -768,6 +793,7 @@ export async function createWebhook(
     assertWebhookLimit(existing, limit);
     return tx.webhook.create({
       data: { creatorId, url, secret: encryptedSecret },
+      select: webhookSelect,
     });
   });
 }
@@ -905,9 +931,9 @@ export async function listWebhookDeliveries(
  * delivery history, which is a lot to give up to replace a credential.
  *
  * Rotation writes nothing but `secret`: the id, URL, enabled flag and every
- * WebhookDelivery row survive untouched. dispatchWebhooks reads the secret per
- * dispatch, so the next delivery is signed with the new one with no restart
- * and no cache to invalidate.
+ * WebhookDelivery row survive untouched. deliver() reads the secret at send
+ * time, so any delivery not yet sent — even one already queued — is signed with
+ * the new one with no restart and no cache to invalidate.
  *
  * There is no overlap window where both secrets are accepted — the signature
  * is computed by us and verified by the receiver, so the cutover is whenever

@@ -35,7 +35,12 @@ jest.unstable_mockModule("../../db.js", () => ({
 
 const { assertWebhookLimit, webhookLimit, WEBHOOK_LIMIT_CODE } =
   await import("../../modules/webhooks/limit.js");
-const { createWebhook, setWebhookEnabled } =
+const {
+  createWebhook,
+  setWebhookEnabled,
+  listWebhooks,
+  MAX_WEBHOOK_SECRET_LENGTH,
+} =
   await import("../../modules/webhooks/webhooks.service.js");
 
 /** Register one webhook, with a distinct URL so rows are tellable apart. */
@@ -117,6 +122,42 @@ describe("assertWebhookLimit", () => {
 // ── Through the service ───────────────────────────────────────────────────────
 
 describe("createWebhook", () => {
+  it("returns only the public webhook fields, matching a listing", async () => {
+    const created = await createWebhook(
+      CREATOR,
+      "https://hooks.example.com/projection",
+      "s".repeat(32),
+    );
+    const [listed] = await listWebhooks(CREATOR);
+
+    expect(Object.keys(created).sort()).toEqual(Object.keys(listed!).sort());
+    expect(created).not.toHaveProperty("creatorId");
+    expect(created).not.toHaveProperty("secret");
+  });
+
+  it("accepts the maximum secret length", async () => {
+    await expect(
+      createWebhook(
+        CREATOR,
+        "https://hooks.example.com/max-secret",
+        "s".repeat(MAX_WEBHOOK_SECRET_LENGTH),
+      ),
+    ).resolves.toBeDefined();
+  });
+
+  it("rejects secrets over the maximum length with a 400 naming the bound", async () => {
+    await expect(
+      createWebhook(
+        CREATOR,
+        "https://hooks.example.com/over-max",
+        "s".repeat(MAX_WEBHOOK_SECRET_LENGTH + 1),
+      ),
+    ).rejects.toMatchObject({
+      statusCode: 400,
+      message: `Webhook secret must be at most ${MAX_WEBHOOK_SECRET_LENGTH} characters long.`,
+    });
+  });
+
   it("registers up to the cap", async () => {
     for (let i = 0; i < 3; i++) await register(CREATOR, i);
     expect(fake.webhooks.size).toBe(3);

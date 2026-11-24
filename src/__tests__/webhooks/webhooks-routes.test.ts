@@ -68,6 +68,7 @@ jest.unstable_mockModule("../../modules/webhooks/webhooks.service.js", () => ({
   generateWebhookSecret: () => SECRET,
   // Mirrors webhooks.service.ts — the route schemas read these bounds.
   MIN_WEBHOOK_SECRET_LENGTH: 16,
+  MAX_WEBHOOK_SECRET_LENGTH: 256,
   DEFAULT_DELIVERY_PAGE_SIZE: 20,
   MAX_DELIVERY_PAGE_SIZE: 100,
   DEFAULT_WEBHOOK_PAGE_SIZE: 50,
@@ -177,6 +178,38 @@ describe("POST /", () => {
     expect(res.json().error.fieldErrors.secret).toBeDefined();
   });
 
+  it("accepts a secret at the maximum length", async () => {
+    const secret = "s".repeat(256);
+    createWebhookMock.mockResolvedValueOnce(webhook);
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/",
+      headers: authHeaders(),
+      payload: { url: "https://example.com/hook", secret },
+    });
+
+    expect(res.statusCode).toBe(201);
+    expect(createWebhookMock).toHaveBeenCalledWith(
+      CREATOR,
+      "https://example.com/hook",
+      secret,
+    );
+  });
+
+  it("returns 400 naming the maximum length when a secret is too long", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/",
+      headers: authHeaders(),
+      payload: { url: "https://example.com/hook", secret: "s".repeat(257) },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.fieldErrors.secret.join(" ")).toContain("256");
+    expect(createWebhookMock).not.toHaveBeenCalled();
+  });
+
   it("returns 201 with the webhook and its secret", async () => {
     const res = await app.inject({
       method: "POST",
@@ -187,6 +220,20 @@ describe("POST /", () => {
 
     expect(res.statusCode).toBe(201);
     expect(res.json()).toEqual({ webhook: { ...webhook, secret: SECRET } });
+    const created = res.json().webhook as Record<string, unknown>;
+    const listedResponse = await app.inject({
+      method: "GET",
+      url: "/",
+      headers: authHeaders(),
+    });
+    const listed = listedResponse.json().webhooks[0] as Record<
+      string,
+      unknown
+    >;
+    expect(Object.keys(created).sort()).toEqual(
+      [...Object.keys(listed), "secret"].sort(),
+    );
+    expect(created).not.toHaveProperty("creatorId");
     expect(createWebhookMock).toHaveBeenCalledWith(
       CREATOR,
       "https://example.com/hook",
@@ -206,6 +253,19 @@ describe("PATCH /:id", () => {
 
     expect(res.statusCode).toBe(400);
     expect(res.json().error.fieldErrors.enabled).toBeDefined();
+    expect(setWebhookEnabledMock).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 naming the field when the body also contains url", async () => {
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/${WEBHOOK_ID}`,
+      headers: authHeaders(),
+      payload: { enabled: true, url: "https://hooks.example.com/fixed" },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(JSON.stringify(res.json().error)).toContain("url");
     expect(setWebhookEnabledMock).not.toHaveBeenCalled();
   });
 
@@ -351,6 +411,36 @@ describe("POST /:id/secret", () => {
 
     expect(res.statusCode).toBe(400);
     expect(res.json().error.fieldErrors.secret).toBeDefined();
+    expect(rotateWebhookSecretMock).not.toHaveBeenCalled();
+  });
+
+  it("accepts a secret at the maximum length", async () => {
+    const secret = "s".repeat(256);
+    const res = await app.inject({
+      method: "POST",
+      url: `/${WEBHOOK_ID}/secret`,
+      headers: authHeaders(),
+      payload: { secret },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(rotateWebhookSecretMock).toHaveBeenCalledWith(
+      CREATOR,
+      WEBHOOK_ID,
+      secret,
+    );
+  });
+
+  it("returns 400 naming the maximum length when a secret is too long", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: `/${WEBHOOK_ID}/secret`,
+      headers: authHeaders(),
+      payload: { secret: "s".repeat(257) },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.fieldErrors.secret.join(" ")).toContain("256");
     expect(rotateWebhookSecretMock).not.toHaveBeenCalled();
   });
 

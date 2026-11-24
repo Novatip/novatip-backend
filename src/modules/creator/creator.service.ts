@@ -20,10 +20,12 @@ import {
   revokeCreatorTokens,
 } from "../../redis.js";
 import { resolveJarId } from "./jar-id.js";
+import { RESERVED_SLUGS } from "./reserved-slugs.js";
 import { CREATOR_SLUG_REGEX } from "../../utils/validation.js";
 
 // Re-exported so callers keep importing the creator API from one place.
 export { jarIdForSlug, resolveJarId } from "./jar-id.js";
+export { RESERVED_SLUGS } from "./reserved-slugs.js";
 
 /**
  * The sign-in placeholder every new wallet starts on: auth.service mints
@@ -45,38 +47,6 @@ export const PLACEHOLDER_SLUG_REGEX = /^user_[0-9a-f]{8}$/;
  */
 export const PROFILE_CACHE_TTL = 60; // seconds
 const MILLIS_PER_DAY = 86_400_000;
-
-/**
- * Slugs that can't be claimed by a creator.
- *
- * novatip-web serves creator pages from src/app/[slug]/page.tsx, at the same
- * routing level as static routes like /dashboard and /onboarding. Next.js
- * resolves static segments before dynamic ones, so a creator claiming one of
- * those slugs would get a page permanently shadowed by the app's own route.
- * api and _next are reserved for the same routing reason; admin/support/etc
- * are reserved to prevent impersonation.
- *
- * Exported as a single constant so claimSlug and isSlugAvailable can't drift
- * apart on what's reserved.
- */
-export const RESERVED_SLUGS: ReadonlySet<string> = new Set([
-  "api",
-  "admin",
-  "dashboard",
-  "onboarding",
-  "settings",
-  "login",
-  "logout",
-  "auth",
-  "support",
-  "help",
-  "about",
-  "terms",
-  "privacy",
-  "static",
-  "_next",
-  "novatip",
-]);
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -328,6 +298,7 @@ export async function claimSlug(input: ClaimSlugInput) {
   }
 
   await cacheInvalidate(`creator:${input.slug}`);
+  await cacheInvalidate(`analytics:collaborators:${creator.id}`);
   return creator;
 }
 
@@ -653,6 +624,7 @@ export async function updateCreatorSplits(
   }
 
   await cacheInvalidate(`creator:${creator.slug}`);
+  await cacheInvalidate(`analytics:collaborators:${creator.id}`);
   return creator;
 }
 

@@ -26,6 +26,7 @@ import {
   deleteWebhook,
   generateWebhookSecret,
   MIN_WEBHOOK_SECRET_LENGTH,
+  MAX_WEBHOOK_SECRET_LENGTH,
   DEFAULT_DELIVERY_PAGE_SIZE,
   MAX_DELIVERY_PAGE_SIZE,
   DEFAULT_WEBHOOK_PAGE_SIZE,
@@ -34,13 +35,14 @@ import {
 
 /**
  * A caller-supplied signing secret. Shared by registration and rotation so
- * the two cannot drift on what they accept. MIN_WEBHOOK_SECRET_LENGTH is the
- * floor for something used as an HMAC key — the same floor the service
- * itself enforces, so this is a fast, friendly rejection rather than the only
- * one; omit the field and the server mints one with 192 bits of entropy
- * instead, which is the better choice.
+ * the two cannot drift on what they accept. The service enforces the same
+ * bounds so direct callers cannot bypass them; omit the field and the server
+ * mints one with 192 bits of entropy instead, which is the better choice.
  */
-const webhookSecret = z.string().min(MIN_WEBHOOK_SECRET_LENGTH);
+const webhookSecret = z
+  .string()
+  .min(MIN_WEBHOOK_SECRET_LENGTH)
+  .max(MAX_WEBHOOK_SECRET_LENGTH);
 
 const CreateBody = z.object({
   url: httpsUrl("Webhook URL"),
@@ -58,9 +60,13 @@ const RotateBody = z.object({
  * A "pause this" button that sends the state it wants is idempotent — a retry
  * after a dropped response cannot silently re-enable the webhook.
  */
-const EnabledBody = z.object({
-  enabled: z.boolean(),
-});
+const EnabledBody = z
+  .object({
+    enabled: z.boolean(),
+  })
+  // Unknown keys (e.g. `url`) are a 400 naming the field, not silently
+  // stripped — there is no route to edit a webhook's URL.
+  .strict();
 
 /**
  * Delivery-history paging. Exported so the bounds can be unit tested without

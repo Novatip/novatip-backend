@@ -6,7 +6,7 @@
  */
 
 import { db } from "../../db.js";
-import { encodeCursor, decodeCursor, type Cursor } from "../../utils/cursor.js";
+import { encodeCursor, decodeCursor, cursorFilter } from "../../utils/cursor.js";
 
 export const DEFAULT_NOTIFICATION_PAGE_SIZE = 20;
 export const MAX_NOTIFICATION_PAGE_SIZE = 100;
@@ -40,8 +40,8 @@ export async function listNotifications(
   const after = cursor ? decodeCursor(cursor) : null;
 
   const where = unreadOnly
-    ? { creatorId, readAt: null, ...(after ? cursorWhere(after) : {}) }
-    : { creatorId, ...(after ? cursorWhere(after) : {}) };
+    ? { creatorId, readAt: null, ...(after ? cursorFilter(after, "createdAt", "id") : {}) }
+    : { creatorId, ...(after ? cursorFilter(after, "createdAt", "id") : {}) };
 
   const [rows, unreadCount] = await Promise.all([
     db.notification.findMany({
@@ -79,18 +79,6 @@ export async function listNotifications(
     unreadCount,
     nextCursor:
       hasMore && last ? encodeCursor(last.createdAt, last.id) : null,
-  };
-}
-
-function cursorWhere(cursor: Cursor) {
-  return {
-    OR: [
-      { createdAt: { lt: cursor.timestamp } },
-      {
-        createdAt: cursor.timestamp,
-        id: { lt: cursor.key },
-      },
-    ],
   };
 }
 

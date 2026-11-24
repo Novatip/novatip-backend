@@ -15,6 +15,7 @@ process.env["JWT_SECRET"] ??= "test-secret-at-least-32-chars-long-123456";
 process.env["TIP_SPLITTER_CONTRACT_ID"] ??= `C${"A".repeat(55)}`;
 
 const CREATOR_ID = "creator-1";
+const BOM = "\uFEFF";
 
 interface Row {
   id: string;
@@ -87,6 +88,8 @@ jest.unstable_mockModule("../../redis.js", () => ({
   cacheGet: async (): Promise<null> => null,
   cacheSet: async (): Promise<void> => undefined,
   cacheInvalidate: async (): Promise<void> => undefined,
+  cacheInvalidatePrefix: async (): Promise<void> => undefined,
+  revokeCreatorTokens: async (): Promise<void> => undefined,
 }));
 
 jest.unstable_mockModule("@fastify/rate-limit", () => ({
@@ -150,7 +153,20 @@ beforeEach(() => {
 describe("streamTipHistoryCsv", () => {
   it("returns only the header for an empty history", async () => {
     await expect(readCsv()).resolves.toBe(
-      "id,txHash,fromAddress,amount,message,ledgerAt\n",
+      `${BOM}id,txHash,fromAddress,amount,message,ledgerAt\n`,
+    );
+  });
+
+  it("begins with a UTF-8 BOM followed by the header row", async () => {
+    const chunks: string[] = [];
+    for await (const chunk of streamTipHistoryCsv(CREATOR_ID)) {
+      chunks.push(chunk);
+    }
+    const bytes = Buffer.from(chunks.join(""), "utf8");
+
+    expect([...bytes.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+    expect(bytes.subarray(3).toString("utf8")).toMatch(
+      /^id,txHash,fromAddress,amount,message,ledgerAt\n/,
     );
   });
 
@@ -160,7 +176,7 @@ describe("streamTipHistoryCsv", () => {
     ];
 
     await expect(readCsv()).resolves.toBe(
-      "id,txHash,fromAddress,amount,message,ledgerAt\n" +
+      `${BOM}id,txHash,fromAddress,amount,message,ledgerAt\n` +
         'tip_0001,hash_0001,GSENDER0001,10000000,"Thanks, ""Ada""\nAgain",2026-10-20T12:34:56.000Z\n',
     );
   });
@@ -179,6 +195,7 @@ describe("streamTipHistoryCsv", () => {
 
     const csv = await readCsv();
     const exportedIds = csv
+      .replace(BOM, "")
       .trimEnd()
       .split("\n")
       .slice(1)

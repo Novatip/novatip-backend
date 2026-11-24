@@ -25,9 +25,11 @@ export const ChallengeBody = z.object({
   walletAddress: z.string().min(56).max(56),
 });
 
+export const AUTH_VERIFY_MESSAGE_MAX_LENGTH = 2048;
+
 export const VerifyBody = z.object({
   walletAddress: z.string().min(56).max(56),
-  message: z.string(),
+  message: z.string().min(1).max(AUTH_VERIFY_MESSAGE_MAX_LENGTH),
   signatureHex: z.string().length(128),
 });
 

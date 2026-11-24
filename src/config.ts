@@ -116,6 +116,14 @@ function optionalBoolean(key: string, fallback: boolean): boolean {
   throw new Error(`Env var ${key} must be "true" or "false", got "${raw}"`);
 }
 
+function resolveBuildCommit(): string {
+  for (const key of ["BUILD_COMMIT", "GIT_COMMIT", "npm_package_git_commit"]) {
+    const value = optional(key, "").trim();
+    if (value !== "") return value;
+  }
+  return "unknown";
+}
+
 const appBaseUrl = optional("APP_BASE_URL", "http://localhost:3000");
 const apiBaseUrl = optional("API_BASE_URL", "http://localhost:3001");
 const nodeEnv = optional("NODE_ENV", "development");
@@ -516,5 +524,14 @@ export const config = {
    */
   get metricsToken(): string {
     return optional("METRICS_TOKEN", "");
+  },
+
+  /**
+   * Build commit identifier exposed by GET /api/v1/health/version.
+   * Resolves BUILD_COMMIT -> GIT_COMMIT -> npm_package_git_commit -> "unknown",
+   * read on access so tests can vary BUILD_COMMIT within the same process.
+   */
+  get buildCommit(): string {
+    return resolveBuildCommit();
   },
 } as const;

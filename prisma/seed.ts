@@ -15,6 +15,7 @@
  */
 
 import { PrismaClient } from "@prisma/client";
+import { CreatorSplitsSchema } from "../src/modules/creator/creator-splits.schema.js";
 
 const db = new PrismaClient();
 
@@ -37,12 +38,22 @@ const DEMO_CREATOR = {
 };
 
 async function main(): Promise<void> {
+  const validatedSplits = CreatorSplitsSchema.parse(DEMO_SPLITS);
+
   const creator = await db.creator.upsert({
     where: { walletAddress: DEMO_WALLET },
-    update: { ...DEMO_CREATOR },
+    update: {
+      slug: "demo",
+      jarId: "@demo",
+      splits: validatedSplits,
+    },
     create: {
       walletAddress: DEMO_WALLET,
-      ...DEMO_CREATOR,
+      slug: "demo",
+      jarId: "@demo",
+      displayName: "Demo Creator",
+      bio: "A two-person split jar on Stellar testnet. Tips divide 70/30, atomically.",
+      splits: validatedSplits,
     },
   });
 

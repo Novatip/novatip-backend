@@ -16,8 +16,9 @@ import { validateSlugParam } from "../../utils/validation.js";
 import { registerDedicatedRateLimit } from "../../utils/rate-limit.js";
 
 export const PNG_QR_WIDTH_DEFAULT = 512;
-export const PNG_QR_WIDTH_MIN = 64;
+export const PNG_QR_WIDTH_MIN = 256;
 export const PNG_QR_WIDTH_MAX = 2048;
+export const QR_QUIET_ZONE_MODULES = 4;
 
 const PngQuery = z.object({
   width: z.coerce
@@ -51,6 +52,13 @@ export const qrRoutes: FastifyPluginAsync = async (app) => {
       hook: "preHandler",
     });
 
+    // Override Helmet's default `Cross-Origin-Resource-Policy: same-origin`
+    // in an onSend hook so it runs after @fastify/helmet's root onSend hook.
+    // QR codes are intentionally public for embedding via <img> on any origin.
+    qrApp.addHook("onSend", async (_request, reply) => {
+      reply.header("Cross-Origin-Resource-Policy", "cross-origin");
+    });
+
     // ── GET /:slug — SVG ─────────────────────────────────────────────────────
     qrApp.get("/:slug", async (request, reply) => {
       const slug = validateSlugParam(request.params, reply);
@@ -63,7 +71,7 @@ export const qrRoutes: FastifyPluginAsync = async (app) => {
 
       const svg = await QRCode.toString(tipUrl, {
         type: "svg",
-        margin: 2,
+        margin: QR_QUIET_ZONE_MODULES,
         color: { dark: "#000000", light: "#ffffff" },
       });
 
@@ -89,7 +97,7 @@ export const qrRoutes: FastifyPluginAsync = async (app) => {
 
       const pngBuffer = await QRCode.toBuffer(tipUrl, {
         type: "png",
-        margin: 2,
+        margin: QR_QUIET_ZONE_MODULES,
         width: query.data.width,
         color: { dark: "#000000", light: "#ffffff" },
       });
