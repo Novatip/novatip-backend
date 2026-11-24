@@ -160,7 +160,7 @@ function processDeliveryQueue(): void {
 }
 
 function queueDelivery(
-  webhook: { id: string; url: string; secret: string },
+  webhook: { id: string; url: string },
   body: string,
   payload: DeliveryPayload,
 ): Promise<DeliveryOutcome> {
@@ -286,19 +286,32 @@ export async function dispatchWebhooks(event: TipEvent): Promise<void> {
  * Unexpected errors may still propagate to callers.
  */
 async function deliver(
-  webhook: { id: string; url: string; secret: string },
+  webhook: { id: string; url: string },
   body: string,
   payload: DeliveryPayload,
 ): Promise<DeliveryOutcome> {
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const startTime = Date.now();
 
+  // The secret is read now, at send time, never carried in the queued job: a
+  // rotation between enqueue and send must sign with the new secret. Both
+  // dispatch and the test ping go through here.
   let secret: string;
   try {
-    secret = decryptWebhookSecret(
-      webhook.secret,
-      getWebhookEncryptionKey(),
-    );
+    const current = await db.webhook.findUnique({
+      where: { id: webhook.id },
+      select: { secret: true },
+    });
+    if (!current) {
+      // Deleted while queued: nothing to sign with and no row to record on.
+      return {
+        statusCode: null,
+        success: false,
+        response: "WEBHOOK_NOT_FOUND",
+        attemptedAt: new Date(startTime),
+      };
+    }
+    secret = decryptWebhookSecret(current.secret, getWebhookEncryptionKey());
   } catch (err) {
     webhookLogger.error(
       { err, webhookId: webhook.id },
@@ -562,9 +575,9 @@ export async function sendTestPing(
 ): Promise<DeliveryOutcome | null> {
   const webhook = await db.webhook.findFirst({
     where: { id: webhookId, creatorId },
-    // The one place the secret is read back out — it is needed to sign, and
-    // never leaves this function.
-    select: { id: true, url: true, secret: true },
+    // The secret is deliberately not read here: deliver() fetches it at send
+    // time so a rotation while the ping is queued is honoured.
+    select: { id: true, url: true },
   });
 
   if (!webhook) return null;
@@ -918,9 +931,9 @@ export async function listWebhookDeliveries(
  * delivery history, which is a lot to give up to replace a credential.
  *
  * Rotation writes nothing but `secret`: the id, URL, enabled flag and every
- * WebhookDelivery row survive untouched. dispatchWebhooks reads the secret per
- * dispatch, so the next delivery is signed with the new one with no restart
- * and no cache to invalidate.
+ * WebhookDelivery row survive untouched. deliver() reads the secret at send
+ * time, so any delivery not yet sent — even one already queued — is signed with
+ * the new one with no restart and no cache to invalidate.
  *
  * There is no overlap window where both secrets are accepted — the signature
  * is computed by us and verified by the receiver, so the cutover is whenever

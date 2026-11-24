@@ -60,9 +60,13 @@ const RotateBody = z.object({
  * A "pause this" button that sends the state it wants is idempotent — a retry
  * after a dropped response cannot silently re-enable the webhook.
  */
-const EnabledBody = z.object({
-  enabled: z.boolean(),
-});
+const EnabledBody = z
+  .object({
+    enabled: z.boolean(),
+  })
+  // Unknown keys (e.g. `url`) are a 400 naming the field, not silently
+  // stripped — there is no route to edit a webhook's URL.
+  .strict();
 
 /**
  * Delivery-history paging. Exported so the bounds can be unit tested without
