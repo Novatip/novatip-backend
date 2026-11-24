@@ -36,6 +36,13 @@ function optionalInt(key: string, fallback: number, min?: number): number {
   return parsed;
 }
 
+const NODE_ENVS = ["development", "production", "test"] as const;
+type NodeEnv = (typeof NODE_ENVS)[number];
+
+function isNodeEnv(value: string): value is NodeEnv {
+  return (NODE_ENVS as readonly string[]).includes(value);
+}
+
 const STELLAR_NETWORKS = ["testnet", "mainnet", "local"] as const;
 type StellarNetwork = (typeof STELLAR_NETWORKS)[number];
 
@@ -120,6 +127,11 @@ function resolveBuildCommit(): string {
 const appBaseUrl = optional("APP_BASE_URL", "http://localhost:3000");
 const apiBaseUrl = optional("API_BASE_URL", "http://localhost:3001");
 const nodeEnv = optional("NODE_ENV", "development");
+if (!isNodeEnv(nodeEnv)) {
+  throw new Error(
+    `Env var NODE_ENV must be one of ${NODE_ENVS.join(", ")}, got "${nodeEnv}"`,
+  );
+}
 const webhookEncryptionKey = optional("WEBHOOK_ENCRYPTION_KEY", "");
 
 if (
@@ -179,6 +191,11 @@ export const config = {
 
   databaseUrl: require("DATABASE_URL"),
   redisUrl: optional("REDIS_URL", "redis://localhost:6379"),
+  redis: {
+    url: optional("REDIS_URL", "redis://localhost:6379"),
+    maxRetriesPerRequest: optionalInt("REDIS_MAX_RETRIES_PER_REQUEST", 3, 0),
+    enableReadyCheck: optionalBoolean("REDIS_ENABLE_READY_CHECK", true),
+  },
 
   jwtSecret: jwtSecretValue,
   jwtExpiresIn,
@@ -186,12 +203,21 @@ export const config = {
 
   stellar: {
     network: stellarNetwork,
-    rpcUrl: optional("SOROBAN_RPC_URL", "https://soroban-testnet.stellar.org"),
-    horizonUrl: optional("HORIZON_URL", "https://horizon-testnet.stellar.org"),
-    passphrase: optional(
-      "NETWORK_PASSPHRASE",
-      "Test SDF Network ; September 2015",
-    ),
+    rpcUrl:
+      stellarNetwork === "mainnet"
+        ? require("SOROBAN_RPC_URL")
+        : optional("SOROBAN_RPC_URL", "https://soroban-testnet.stellar.org"),
+    horizonUrl:
+      stellarNetwork === "mainnet"
+        ? require("HORIZON_URL")
+        : optional("HORIZON_URL", "https://horizon-testnet.stellar.org"),
+    passphrase:
+      stellarNetwork === "mainnet"
+        ? require("NETWORK_PASSPHRASE")
+        : optional(
+            "NETWORK_PASSPHRASE",
+            "Test SDF Network ; September 2015",
+          ),
     tipSplitterContractId: require("TIP_SPLITTER_CONTRACT_ID"),
     // Defaulting this on mainnet would silently point at an asset that
     // doesn't exist there (the fallback below is the *testnet* USDC SAC), so
@@ -298,15 +324,16 @@ export const config = {
      */
     retention: {
       /** Successful deliveries are the bulk of the rows and the least useful. */
-      successDays: optionalInt("WEBHOOK_DELIVERY_RETENTION_DAYS", 30),
+      successDays: optionalInt("WEBHOOK_DELIVERY_RETENTION_DAYS", 30, 0),
       /** Failures are kept longer — they are what anyone actually debugs. */
-      failureDays: optionalInt("WEBHOOK_DELIVERY_FAILURE_RETENTION_DAYS", 90),
+      failureDays: optionalInt("WEBHOOK_DELIVERY_FAILURE_RETENTION_DAYS", 90, 0),
       /** Rows deleted per statement, so a large backlog never locks the table. */
-      batchSize: optionalInt("WEBHOOK_DELIVERY_PRUNE_BATCH_SIZE", 500),
+      batchSize: optionalInt("WEBHOOK_DELIVERY_PRUNE_BATCH_SIZE", 500, 1),
       /** How often the pruner wakes up. */
       intervalMinutes: optionalInt(
         "WEBHOOK_DELIVERY_PRUNE_INTERVAL_MINUTES",
         60,
+        1,
       ),
     },
   },
@@ -341,6 +368,19 @@ export const config = {
      * the hold, freeing a slug the moment it is released.
      */
     slugHoldDays: optionalInt("CREATOR_SLUG_HOLD_DAYS", 90, 0),
+
+    /**
+     * Minimum days between slug renames. Prevents slug squatting: a creator
+     * who can rename freely can reserve an unlimited number of slugs by
+     * renaming a → b → c → d, holding each for the full CREATOR_SLUG_HOLD_DAYS
+     * window. A rename cooldown makes the rename history finite and time-bound.
+     * 0 disables the cooldown, allowing unlimited renames.
+     */
+    slugRenameCooldownDays: optionalInt(
+      "CREATOR_SLUG_RENAME_COOLDOWN_DAYS",
+      0,
+      0,
+    ),
 
     /**
      * Days after which an abandoned sign-in placeholder — a creator still on
@@ -428,6 +468,11 @@ export const config = {
      * history through the database in batches of 500.
      */
     csvExport: optionalInt("CSV_EXPORT_RATE_LIMIT", 5),
+
+    /**
+     * Per-IP cap on creator email verification requests via PATCH /creators/me.
+     */
+    emailVerification: optionalInt("EMAIL_VERIFICATION_RATE_LIMIT", 5),
   },
 
   appBaseUrl,
@@ -472,8 +517,10 @@ export const config = {
   },
 
   /**
-   * Bearer token GET /metrics requires. Empty means no token is checked, so
-   * the server should then be bound to an address only the scraper reaches.
+   * Bearer token GET /metrics requires. When empty, /metrics is served without
+   * authentication — the server does not bind /metrics to an internal interface
+   * automatically, so operators must enforce external network-level access controls
+   * (e.g. firewall, reverse proxy, or loopback host binding).
    */
   get metricsToken(): string {
     return optional("METRICS_TOKEN", "");

@@ -2,7 +2,7 @@
  * scripts/check-reserved-slugs.ts
  *
  * Reports any existing creators whose slug now falls in RESERVED_SLUGS
- * (src/modules/creator/creator.service.ts). Those slugs were claimable
+ * (src/modules/creator/reserved-slugs.ts). Those slugs were claimable
  * before the reserved-slug list existed, so run this once against
  * production before/after deploying that change and note the results
  * in the PR — the list only blocks new claims, it doesn't touch rows
@@ -12,7 +12,7 @@
  */
 
 import { PrismaClient } from "@prisma/client";
-import { RESERVED_SLUGS } from "../src/modules/creator/creator.service.js";
+import { RESERVED_SLUGS } from "../src/modules/creator/reserved-slugs.js";
 
 const db = new PrismaClient();
 

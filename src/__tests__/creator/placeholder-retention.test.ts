@@ -308,3 +308,176 @@ describe("cutoffFor", () => {
     );
   });
 });
+
+describe("Scheduler functions", () => {
+  const {
+    startPlaceholderCreatorPruner,
+    stopPlaceholderCreatorPruner,
+  } = await import("../../modules/creator/placeholder-retention.js");
+
+  // Mock logger to avoid console noise in tests
+  jest.unstable_mockModule("../../utils/logger.js", () => ({
+    logger: {
+      child: () => ({
+        info: jest.fn(),
+        error: jest.fn(),
+      }),
+    },
+  }));
+
+  afterEach(() => {
+    stopPlaceholderCreatorPruner();
+    jest.clearAllTimers();
+  });
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterAll(() => {
+    jest.useRealTimers();
+  });
+
+  it("should not start when retention is disabled", async () => {
+    await withCreatorsConfigOverride(
+      "placeholderRetentionDays",
+      0,
+      async () => {
+        const findManyCallsBefore = findManyMock.mock.calls.length;
+        
+        startPlaceholderCreatorPruner();
+        
+        // Fast-forward past the first run delay
+        await jest.advanceTimersByTimeAsync(60_000);
+        
+        // No prune should have been scheduled
+        expect(findManyMock.mock.calls.length).toBe(findManyCallsBefore);
+      },
+    );
+  });
+
+  it("should not schedule two timers when called twice", async () => {
+    creators.push({
+      id: "c1",
+      slug: placeholderSlug("1"),
+      createdAt: daysAgo(RETENTION_DAYS + 1),
+    });
+
+    const findManyCallsBefore = findManyMock.mock.calls.length;
+
+    startPlaceholderCreatorPruner();
+    startPlaceholderCreatorPruner();
+
+    // Fast-forward past the first run delay
+    await jest.advanceTimersByTimeAsync(60_000);
+
+    // Only one prune should have run
+    expect(findManyMock.mock.calls.length).toBe(findManyCallsBefore + 1);
+  });
+
+  it("should prevent a pending run from firing when stopped", async () => {
+    creators.push({
+      id: "c1",
+      slug: placeholderSlug("1"),
+      createdAt: daysAgo(RETENTION_DAYS + 1),
+    });
+
+    const findManyCallsBefore = findManyMock.mock.calls.length;
+
+    startPlaceholderCreatorPruner();
+    
+    // Stop before the first run delay elapses
+    await jest.advanceTimersByTimeAsync(30_000);
+    stopPlaceholderCreatorPruner();
+    
+    // Fast-forward past when the first run would have happened
+    await jest.advanceTimersByTimeAsync(60_000);
+
+    // No prune should have run
+    expect(findManyMock.mock.calls.length).toBe(findManyCallsBefore);
+  });
+
+  it("should reschedule itself after a successful pass", async () => {
+    creators.push({
+      id: "c1",
+      slug: placeholderSlug("1"),
+      createdAt: daysAgo(RETENTION_DAYS + 1),
+    });
+
+    const findManyCallsBefore = findManyMock.mock.calls.length;
+
+    startPlaceholderCreatorPruner();
+
+    // First run after initial delay
+    await jest.advanceTimersByTimeAsync(60_000);
+    expect(findManyMock.mock.calls.length).toBe(findManyCallsBefore + 1);
+
+    creators.push({
+      id: "c2",
+      slug: placeholderSlug("2"),
+      createdAt: daysAgo(RETENTION_DAYS + 1),
+    });
+
+    // Second run after the configured interval
+    const intervalMs = config.creators.placeholderPruneIntervalMinutes * 60_000;
+    await jest.advanceTimersByTimeAsync(intervalMs);
+    expect(findManyMock.mock.calls.length).toBe(findManyCallsBefore + 2);
+  });
+
+  it("should not reschedule if stopped during a run", async () => {
+    creators.push({
+      id: "c1",
+      slug: placeholderSlug("1"),
+      createdAt: daysAgo(RETENTION_DAYS + 1),
+    });
+
+    const findManyCallsBefore = findManyMock.mock.calls.length;
+
+    startPlaceholderCreatorPruner();
+
+    // First run
+    await jest.advanceTimersByTimeAsync(60_000);
+    expect(findManyMock.mock.calls.length).toBe(findManyCallsBefore + 1);
+
+    // Stop after the run completes but before next one is scheduled
+    stopPlaceholderCreatorPruner();
+
+    creators.push({
+      id: "c2",
+      slug: placeholderSlug("2"),
+      createdAt: daysAgo(RETENTION_DAYS + 1),
+    });
+
+    // Try to advance to the next run - it shouldn't happen
+    const intervalMs = config.creators.placeholderPruneIntervalMinutes * 60_000;
+    await jest.advanceTimersByTimeAsync(intervalMs);
+    expect(findManyMock.mock.calls.length).toBe(findManyCallsBefore + 1);
+  });
+
+  it("should log and reschedule when prunePlaceholderCreators rejects", async () => {
+    // Make findMany throw an error
+    findManyMock.mockRejectedValueOnce(new Error("Database error"));
+
+    const findManyCallsBefore = findManyMock.mock.calls.length;
+
+    startPlaceholderCreatorPruner();
+
+    // First run (will fail)
+    await jest.advanceTimersByTimeAsync(60_000);
+    expect(findManyMock.mock.calls.length).toBe(findManyCallsBefore + 1);
+
+    // Restore normal behavior for the next run
+    findManyMock.mockResolvedValueOnce([]);
+
+    creators.push({
+      id: "c1",
+      slug: placeholderSlug("1"),
+      createdAt: daysAgo(RETENTION_DAYS + 1),
+    });
+
+    // Second run should still happen despite the first one failing
+    const intervalMs = config.creators.placeholderPruneIntervalMinutes * 60_000;
+    await jest.advanceTimersByTimeAsync(intervalMs);
+    expect(findManyMock.mock.calls.length).toBe(findManyCallsBefore + 2);
+  });
+});

@@ -1,5 +1,5 @@
 import rateLimit from "@fastify/rate-limit";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import { redis } from "../redis.js";
 
 export interface DedicatedRateLimitOptions {
@@ -8,6 +8,7 @@ export interface DedicatedRateLimitOptions {
   code: string;
   message: string;
   hook?: "onRequest" | "preHandler";
+  allowList?: (request: FastifyRequest) => boolean | Promise<boolean>;
 }
 
 export async function registerDedicatedRateLimit(
@@ -19,8 +20,9 @@ export async function registerDedicatedRateLimit(
     max: options.max,
     timeWindow: 60_000,
     hook: options.hook ?? "onRequest",
-    redis,
+    ...(redis && { redis }),
     nameSpace: options.nameSpace,
+    ...(options.allowList && { allowList: options.allowList }),
     errorResponseBuilder: (_request, _context) =>
       Object.assign(new Error(options.message), {
         statusCode: 429,

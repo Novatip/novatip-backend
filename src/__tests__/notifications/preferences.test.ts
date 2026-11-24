@@ -283,3 +283,43 @@ describe("PATCH /preferences validation", () => {
     });
   });
 });
+
+// ── PATCH: 404 for missing creator ────────────────────────────────────────────
+
+describe("PATCH /preferences with nonexistent creator", () => {
+  test("returns 404 when the creator no longer exists", async () => {
+    // Remove the creator to simulate a stale JWT
+    creators.delete(CREATOR);
+
+    const res = await app.inject({
+      method: "PATCH",
+      url: "/preferences",
+      headers: authHeaders(),
+      payload: { preferences: { emailEnabled: false } },
+    });
+
+    expect(res.statusCode).toBe(404);
+    const body = res.json();
+    expect(body.error).toBeDefined();
+  });
+
+  test("404 matches the GET behavior for consistency", async () => {
+    creators.delete(CREATOR);
+
+    const getRes = await app.inject({
+      method: "GET",
+      url: "/preferences",
+      headers: authHeaders(),
+    });
+
+    const patchRes = await app.inject({
+      method: "PATCH",
+      url: "/preferences",
+      headers: authHeaders(),
+      payload: { preferences: { emailEnabled: false } },
+    });
+
+    expect(getRes.statusCode).toBe(404);
+    expect(patchRes.statusCode).toBe(404);
+  });
+});

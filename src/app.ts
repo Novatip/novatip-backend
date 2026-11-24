@@ -8,6 +8,10 @@ import { buildServer } from "./server.js";
 import { config } from "./config.js";
 import { startIndexer, stopIndexer } from "./indexer/indexer.js";
 import {
+  startUnownedTipPruner,
+  stopUnownedTipPruner,
+} from "./indexer/persist.js";
+import {
   startDeliveryPruner,
   stopDeliveryPruner,
 } from "./modules/webhooks/retention.js";
@@ -37,6 +41,9 @@ startTipDigestScheduler();
 // Age out abandoned sign-in placeholders on a schedule
 startPlaceholderCreatorPruner();
 
+// Age out unowned tips on a schedule
+startUnownedTipPruner();
+
 // Graceful shutdown
 const SHUTDOWN_TIMEOUT_MS = 10_000;
 
@@ -56,6 +63,7 @@ const shutdown = (): Promise<void> => {
     stopDeliveryPruner();
     stopTipDigestScheduler();
     stopPlaceholderCreatorPruner();
+    stopUnownedTipPruner();
 
     // Forces the process to exit even if the indexer's current iteration or
     // the server's close hooks hang — a stuck shutdown should not block the

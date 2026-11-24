@@ -21,22 +21,15 @@
 import { db } from "../../db.js";
 import { config } from "../../config.js";
 import { logger } from "../../utils/logger.js";
+import {
+  createBatchPruner,
+  cutoffFor,
+  MAX_BATCHES_PER_RUN,
+} from "../../utils/batch-pruner.js";
+
+export { cutoffFor };
 
 const retentionLogger = logger.child({ component: "webhook-retention" });
-
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
-
-/**
- * Ceiling on delivery batches per run, shared across success and failure
- * rows. A first run against a years-old table has more to delete than one pass
- * should attempt; stopping early leaves the rest for the next tick rather than
- * running a single multi-hour transaction. At the default batch size this is
- * 25k delivery rows, plus the separate notification budget.
- */
-const MAX_BATCHES_PER_RUN = 50;
-
-/** Delay before the first prune, so it doesn't compete with server startup. */
-const FIRST_RUN_DELAY_MS = 60_000;
 
 export interface PruneResult {
   deletedSuccesses: number;
@@ -44,11 +37,6 @@ export interface PruneResult {
   deletedNotifications: number;
   /** True when the batch ceiling was hit with rows still outstanding. */
   truncated: boolean;
-}
-
-/** The timestamp before which rows of a given age are eligible for deletion. */
-export function cutoffFor(days: number, now: Date): Date {
-  return new Date(now.getTime() - days * MS_PER_DAY);
 }
 
 /** Whether any retention window is active. Both at 0 means keep everything. */
@@ -133,12 +121,11 @@ async function pruneNotificationsOlderThan(
 }
 
 /**
- * Run one retention pass. Safe to call directly (a manual backfill, a test)
- * as well as from the scheduler.
+ * Delete webhook deliveries for both success and failure classes.
  */
-export async function pruneRetainedRows(
+export async function pruneWebhookDeliveries(
   now: Date = new Date(),
-): Promise<PruneResult> {
+): Promise<{ deletedSuccesses: number; deletedFailures: number; truncated: boolean }> {
   const { successDays, failureDays, batchSize } = config.webhooks.retention;
 
   let budget = MAX_BATCHES_PER_RUN;
@@ -146,7 +133,6 @@ export async function pruneRetainedRows(
 
   let deletedSuccesses = 0;
   let deletedFailures = 0;
-  let deletedNotifications = 0;
 
   if (successDays > 0 && budget > 0) {
     const result = await pruneOlderThan(
@@ -172,11 +158,25 @@ export async function pruneRetainedRows(
     truncated = truncated || !result.done;
   }
 
+  return { deletedSuccesses, deletedFailures, truncated };
+}
+
+/**
+ * Run one retention pass. Safe to call directly (a manual backfill, a test)
+ * as well as from the scheduler.
+ */
+export async function pruneRetainedRows(
+  now: Date = new Date(),
+): Promise<PruneResult> {
+  const deliveries = await pruneWebhookDeliveries(now);
+  let deletedNotifications = 0;
+  let truncated = deliveries.truncated;
+
   const notificationDays = config.notifications.retentionDays;
   if (notificationDays > 0) {
     const result = await pruneNotificationsOlderThan(
       cutoffFor(notificationDays, now),
-      batchSize,
+      config.webhooks.retention.batchSize,
       MAX_BATCHES_PER_RUN,
     );
     deletedNotifications = result.deleted;
@@ -184,8 +184,8 @@ export async function pruneRetainedRows(
   }
 
   return {
-    deletedSuccesses,
-    deletedFailures,
+    deletedSuccesses: deliveries.deletedSuccesses,
+    deletedFailures: deliveries.deletedFailures,
     deletedNotifications,
     truncated,
   };
@@ -193,86 +193,38 @@ export async function pruneRetainedRows(
 
 // ── Scheduler ─────────────────────────────────────────────────────────────────
 
-let pruneTimer: NodeJS.Timeout | null = null;
-let pruneActive = false;
+const pruner = createBatchPruner({
+  logger: retentionLogger,
+  name: "retention",
+  description: "retained rows",
+  retentionEnabled,
+  disabledMessage:
+    "retention disabled — webhook deliveries and notifications are kept indefinitely",
+  getStartMetadata: () => {
+    const { successDays, failureDays, intervalMinutes, batchSize } =
+      config.webhooks.retention;
+    return { successDays, failureDays, intervalMinutes, batchSize };
+  },
+  getIntervalMs: () => config.webhooks.retention.intervalMinutes * 60_000,
+  runPrune: () => pruneRetainedRows(),
+  getTotalDeleted: (result) =>
+    result.deletedSuccesses +
+    result.deletedFailures +
+    result.deletedNotifications,
+  getLogDetails: (result) => ({
+    deletedSuccesses: result.deletedSuccesses,
+    deletedFailures: result.deletedFailures,
+    deletedNotifications: result.deletedNotifications,
+    truncated: result.truncated,
+  }),
+});
 
-/**
- * Start the periodic prune. Safe to call once at server startup.
- *
- * Each run reschedules itself on completion rather than firing on a fixed
- * interval, so a slow pass against a large backlog can never overlap the next.
- */
+/** Start the periodic prune. Safe to call once at server startup. */
 export function startDeliveryPruner(): void {
-  if (pruneTimer !== null || pruneActive) return;
-
-  if (!retentionEnabled()) {
-    retentionLogger.info(
-      "retention disabled — webhook deliveries and notifications are kept indefinitely",
-    );
-    return;
-  }
-
-  const { successDays, failureDays, intervalMinutes, batchSize } =
-    config.webhooks.retention;
-
-  retentionLogger.info(
-    { successDays, failureDays, intervalMinutes, batchSize },
-    "starting retention pruner",
-  );
-
-  pruneActive = true;
-  scheduleNext(FIRST_RUN_DELAY_MS);
+  pruner.start();
 }
 
 /** Stop the periodic prune. Called from the server's shutdown path. */
 export function stopDeliveryPruner(): void {
-  pruneActive = false;
-
-  if (pruneTimer !== null) {
-    clearTimeout(pruneTimer);
-    pruneTimer = null;
-  }
-}
-
-function scheduleNext(delayMs: number): void {
-  pruneTimer = setTimeout(() => {
-    void runPrune();
-  }, delayMs);
-
-  // Housekeeping must never be the reason the process stays alive.
-  pruneTimer.unref();
-}
-
-async function runPrune(): Promise<void> {
-  if (!pruneActive) return;
-
-  try {
-    const result = await pruneRetainedRows();
-    const total =
-      result.deletedSuccesses +
-      result.deletedFailures +
-      result.deletedNotifications;
-
-    if (total > 0) {
-      retentionLogger.info(
-        {
-          deletedSuccesses: result.deletedSuccesses,
-          deletedFailures: result.deletedFailures,
-          deletedNotifications: result.deletedNotifications,
-          truncated: result.truncated,
-        },
-        result.truncated
-          ? "pruned retained rows — batch ceiling reached, continuing next run"
-          : "pruned retained rows",
-      );
-    }
-  } catch (err) {
-    // Retention is housekeeping: a failed pass is logged and retried on the
-    // next tick, never allowed to take the server down.
-    retentionLogger.error({ err }, "retention prune failed");
-  }
-
-  if (pruneActive) {
-    scheduleNext(config.webhooks.retention.intervalMinutes * 60_000);
-  }
+  pruner.stop();
 }

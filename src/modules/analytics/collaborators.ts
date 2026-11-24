@@ -47,7 +47,8 @@ const BPS_TOTAL = 10_000;
 export function parseSplits(value: unknown): Split[] {
   if (!Array.isArray(value)) throw malformedSplits("splits is not an array");
 
-  return value.map((entry, i) => {
+  let totalBps = 0;
+  const parsed = value.map((entry, i) => {
     if (typeof entry !== "object" || entry === null) {
       throw malformedSplits(`splits[${i}] is not an object`);
     }
@@ -64,8 +65,17 @@ export function parseSplits(value: unknown): Split[] {
       throw malformedSplits(`splits[${i}].bps is outside 0–${BPS_TOTAL}`);
     }
 
+    totalBps += bps;
     return { to, bps };
   });
+
+  if (totalBps > BPS_TOTAL) {
+    throw malformedSplits(
+      `splits sum to ${totalBps} bps, which exceeds the maximum ${BPS_TOTAL}`,
+    );
+  }
+
+  return parsed;
 }
 
 /**

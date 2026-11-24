@@ -253,6 +253,27 @@ describe("paging", () => {
       /Invalid cursor/,
     );
   });
+
+  it("rejects an oversized cursor before touching cache or database (#277)", async () => {
+    const { encodeTipCursor, MAX_CURSOR_LENGTH } = await import(
+      "../../modules/analytics/cursor.js"
+    );
+    const oversized = encodeTipCursor(
+      new Date("2026-03-04T05:06:07.008Z"),
+      "x".repeat(MAX_CURSOR_LENGTH),
+    );
+
+    await expect(
+      getPublicRecentTips(SLUG, 20, oversized),
+    ).rejects.toMatchObject({
+      statusCode: 400,
+      code: "INVALID_CURSOR",
+    });
+
+    expect(cacheWrites).toHaveLength(0);
+    expect(getCreatorBySlug).not.toHaveBeenCalled();
+    expect(findMany).not.toHaveBeenCalled();
+  });
 });
 
 // ── Slug resolution and caching ───────────────────────────────────────────────

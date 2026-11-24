@@ -20,10 +20,12 @@ import {
   revokeCreatorTokens,
 } from "../../redis.js";
 import { resolveJarId } from "./jar-id.js";
+import { RESERVED_SLUGS } from "./reserved-slugs.js";
 import { CREATOR_SLUG_REGEX } from "../../utils/validation.js";
 
 // Re-exported so callers keep importing the creator API from one place.
 export { jarIdForSlug, resolveJarId } from "./jar-id.js";
+export { RESERVED_SLUGS } from "./reserved-slugs.js";
 
 /**
  * The sign-in placeholder every new wallet starts on: auth.service mints
@@ -46,38 +48,6 @@ export const PLACEHOLDER_SLUG_REGEX = /^user_[0-9a-f]{8}$/;
 export const PROFILE_CACHE_TTL = 60; // seconds
 const MILLIS_PER_DAY = 86_400_000;
 
-/**
- * Slugs that can't be claimed by a creator.
- *
- * novatip-web serves creator pages from src/app/[slug]/page.tsx, at the same
- * routing level as static routes like /dashboard and /onboarding. Next.js
- * resolves static segments before dynamic ones, so a creator claiming one of
- * those slugs would get a page permanently shadowed by the app's own route.
- * api and _next are reserved for the same routing reason; admin/support/etc
- * are reserved to prevent impersonation.
- *
- * Exported as a single constant so claimSlug and isSlugAvailable can't drift
- * apart on what's reserved.
- */
-export const RESERVED_SLUGS: ReadonlySet<string> = new Set([
-  "api",
-  "admin",
-  "dashboard",
-  "onboarding",
-  "settings",
-  "login",
-  "logout",
-  "auth",
-  "support",
-  "help",
-  "about",
-  "terms",
-  "privacy",
-  "static",
-  "_next",
-  "novatip",
-]);
-
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 /**
@@ -93,7 +63,14 @@ export interface PublicCreator {
   avatarUrl: string | null;
   jarId: string;
   splits: Prisma.JsonValue;
-  createdAt: Date;
+  /**
+   * Account creation time as an ISO 8601 string rather than a Date. Over the
+   * wire this was always an ISO string — JSON has no date type — but the
+   * cached and uncached paths disagreed on the in-process type, since a Date
+   * does not survive a round trip through Redis. Normalising here makes the
+   * two paths return the same thing.
+   */
+  createdAt: string;
 }
 
 // The `| undefined` on each optional field is deliberate. The tsconfig enables
@@ -275,34 +252,49 @@ export async function claimSlug(input: ClaimSlugInput) {
 
   let creator;
   try {
-    creator = await db.creator.update({
-      where: { id: input.creatorId },
-      data: {
-        slug: input.slug,
-        jarId,
-        splits: input.splits ?? [],
-        ...(input.displayName !== undefined && {
-          displayName: input.displayName,
-        }),
-        ...(input.bio !== undefined && { bio: input.bio }),
-      },
+    creator = await db.$transaction(async (tx) => {
+      const updatedCreator = await tx.creator.update({
+        where: { id: input.creatorId },
+        data: {
+          slug: input.slug,
+          jarId,
+          splits: input.splits ?? [],
+          ...(input.displayName !== undefined && {
+            displayName: input.displayName,
+          }),
+          ...(input.bio !== undefined && { bio: input.bio }),
+        },
+      });
+
+      await tx.tip.updateMany({
+        where: {
+          jarId,
+          creatorId: null,
+        },
+        data: {
+          creatorId: updatedCreator.id,
+        },
+      });
+
+      if (current && current.slug !== input.slug) {
+        await tx.releasedSlug.upsert({
+          where: { slug: current.slug },
+          create: {
+            slug: current.slug,
+            previousOwnerId: input.creatorId,
+            releasedAt: new Date(),
+          },
+          update: {
+            previousOwnerId: input.creatorId,
+            releasedAt: new Date(),
+          },
+        });
+      }
+
+      return updatedCreator;
     });
   } catch (err) {
     throw toClaimConflict(toCreatorNotFound(err));
-  }
-
-  await db.tip.updateMany({
-    where: {
-      jarId,
-      creatorId: null,
-    },
-    data: {
-      creatorId: creator.id,
-    },
-  });
-
-  if (current && current.slug !== input.slug) {
-    await recordSlugRelease(current.slug, input.creatorId);
   }
 
   await cacheInvalidate(`creator:${input.slug}`);
@@ -328,6 +320,12 @@ export interface RenameSlugInput {
  * its original jarId, changing only where the tip page resolves.
  * Records the slug left behind as released — that record is what starts the
  * hold — and invalidates the resolver cache for both the old and new slug.
+ *
+ * A rename cooldown (CREATOR_SLUG_RENAME_COOLDOWN_DAYS) prevents slug
+ * squatting: a creator who can rename freely can reserve unlimited slugs by
+ * renaming a → b → c → d, holding each for the full CREATOR_SLUG_HOLD_DAYS
+ * window. The first rename after claiming has no cooldown; subsequent renames
+ * are rate-limited.
  */
 export async function renameSlug(input: RenameSlugInput) {
   if (!CREATOR_SLUG_REGEX.test(input.slug)) {
@@ -355,6 +353,35 @@ export async function renameSlug(input: RenameSlugInput) {
 
   const oldSlug = current.slug;
 
+  // Enforce rename cooldown if configured
+  if (config.creators.slugRenameCooldownDays > 0) {
+    const lastRelease = await db.releasedSlug.findFirst({
+      where: { previousOwnerId: input.creatorId },
+      orderBy: { releasedAt: "desc" },
+    });
+
+    if (lastRelease) {
+      const cooldownMs =
+        config.creators.slugRenameCooldownDays * MILLIS_PER_DAY;
+      const nextAllowedAt = new Date(
+        lastRelease.releasedAt.getTime() + cooldownMs,
+      );
+
+      if (Date.now() < nextAllowedAt.getTime()) {
+        throw Object.assign(
+          new Error(
+            `You may rename again on ${nextAllowedAt.toISOString().slice(0, 10)}.`,
+          ),
+          {
+            statusCode: 429,
+            code: "RENAME_COOLDOWN",
+            nextAllowedAt: nextAllowedAt.toISOString(),
+          },
+        );
+      }
+    }
+  }
+
   const existing = await db.creator.findUnique({ where: { slug: input.slug } });
   if (existing && existing.id !== input.creatorId) {
     throw Object.assign(new Error("This slug is already taken."), {
@@ -369,20 +396,35 @@ export async function renameSlug(input: RenameSlugInput) {
 
   let creator;
   try {
-    creator = await db.creator.update({
-      where: { id: input.creatorId },
-      data: {
-        slug: input.slug,
-      },
+    creator = await db.$transaction(async (tx) => {
+      const updatedCreator = await tx.creator.update({
+        where: { id: input.creatorId },
+        data: {
+          slug: input.slug,
+        },
+      });
+
+      // The slug just left behind is the one the hold protects. Recorded in
+      // the same transaction so a rename that never landed doesn't hold anything.
+      if (input.slug !== oldSlug) {
+        await tx.releasedSlug.upsert({
+          where: { slug: oldSlug },
+          create: {
+            slug: oldSlug,
+            previousOwnerId: input.creatorId,
+            releasedAt: new Date(),
+          },
+          update: {
+            previousOwnerId: input.creatorId,
+            releasedAt: new Date(),
+          },
+        });
+      }
+
+      return updatedCreator;
     });
   } catch (err) {
     throw toClaimConflict(err);
-  }
-
-  // The slug just left behind is the one the hold protects. Recorded after
-  // the write so a rename that never landed doesn't hold anything.
-  if (input.slug !== oldSlug) {
-    await recordSlugRelease(oldSlug, input.creatorId);
   }
 
   await cacheInvalidate(`creator:${oldSlug}`);
@@ -396,8 +438,9 @@ export async function renameSlug(input: RenameSlugInput) {
 /**
  * Remove a creator profile and its private account-owned records while keeping
  * indexed tips as unattributed financial history. The schema sets tip creator
- * references to null when the creator is deleted; webhook delivery records and
- * notifications are explicitly deleted before their parent records.
+ * references to null and cascades notification deletion when the creator is
+ * deleted; webhook delivery records are explicitly deleted before their parent
+ * webhooks.
  */
 export async function deleteCreator(creatorId: string): Promise<void> {
   const slug = await db.$transaction(async (tx) => {
@@ -408,8 +451,6 @@ export async function deleteCreator(creatorId: string): Promise<void> {
     if (!creator) {
       throw Object.assign(new Error("Creator not found."), { statusCode: 404 });
     }
-
-    await tx.notification.deleteMany({ where: { creatorId } });
 
     const webhooks = await tx.webhook.findMany({
       where: { creatorId },
@@ -514,8 +555,13 @@ export async function getCreatorBySlug(slug: string): Promise<PublicCreator> {
     throw Object.assign(new Error("Creator not found."), { statusCode: 404 });
   }
 
-  await cacheSet(cacheKey, creator, PROFILE_CACHE_TTL);
-  return creator;
+  const result: PublicCreator = {
+    ...creator,
+    createdAt: creator.createdAt.toISOString(),
+  };
+
+  await cacheSet(cacheKey, result, PROFILE_CACHE_TTL);
+  return result;
 }
 
 /**
@@ -603,4 +649,45 @@ export async function isSlugAvailable(
   if (jarOwner && jarOwner.id !== viewerId) return false;
 
   return true;
+}
+
+/** Cooldown period in seconds before a verification email can be resent for the same address. */
+export const EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS = 60;
+const emailCooldownMap = new Map<string, number>();
+
+export async function isEmailVerificationInCooldown(
+  creatorId: string,
+  email: string,
+): Promise<boolean> {
+  const normalizedEmail = email.trim().toLowerCase();
+  const key = `email-cooldown:${creatorId}:${normalizedEmail}`;
+  const localExp = emailCooldownMap.get(key);
+  if (localExp !== undefined) {
+    if (localExp > Date.now()) {
+      return true;
+    }
+    emailCooldownMap.delete(key);
+  }
+  const cached = await cacheGet<string>(key);
+  if (cached !== null) {
+    return true;
+  }
+  return false;
+}
+
+export async function recordEmailVerificationCooldown(
+  creatorId: string,
+  email: string,
+): Promise<void> {
+  const normalizedEmail = email.trim().toLowerCase();
+  const key = `email-cooldown:${creatorId}:${normalizedEmail}`;
+  emailCooldownMap.set(
+    key,
+    Date.now() + EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS * 1000,
+  );
+  await cacheSet(key, "1", EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS);
+}
+
+export function resetEmailVerificationCooldown(): void {
+  emailCooldownMap.clear();
 }

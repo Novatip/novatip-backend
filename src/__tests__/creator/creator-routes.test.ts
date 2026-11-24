@@ -61,6 +61,8 @@ jest.unstable_mockModule("../../modules/creator/creator.service.js", () => ({
   updateCreatorSplits: updateCreatorSplitsMock,
   isSlugAvailable: jest.fn(),
   deleteCreator: deleteCreatorMock,
+  isEmailVerificationInCooldown: jest.fn(async () => false),
+  recordEmailVerificationCooldown: jest.fn(async () => undefined),
 }));
 
 jest.unstable_mockModule("../../modules/creator/messages.service.js", () => ({
@@ -196,6 +198,24 @@ describe("PATCH /me/splits", () => {
       url: "/me/splits",
       headers: authHeaders(),
       payload: { splits: [] },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.fieldErrors.splits).toBeDefined();
+    expect(updateCreatorSplitsMock).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 when the splits array exceeds the maximum allowed splits", async () => {
+    const tooManySplits = Array.from({ length: 51 }, (_, i) => ({
+      to: `G${String.fromCharCode(65 + Math.floor(i / 26))}${String.fromCharCode(65 + (i % 26))}${"A".repeat(53)}`,
+      bps: 1,
+    }));
+
+    const res = await app.inject({
+      method: "PATCH",
+      url: "/me/splits",
+      headers: authHeaders(),
+      payload: { splits: tooManySplits },
     });
 
     expect(res.statusCode).toBe(400);

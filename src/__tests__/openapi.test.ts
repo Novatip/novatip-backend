@@ -1,7 +1,12 @@
+process.env["DATABASE_URL"] ??= "postgresql://user:pass@localhost:5432/test";
+process.env["JWT_SECRET"] ??= "test-secret-at-least-32-chars-long-123456";
+process.env["TIP_SPLITTER_CONTRACT_ID"] ??= `C${"A".repeat(55)}`;
+
 import Fastify from "fastify";
 import { Prisma } from "@prisma/client";
 import { openApiSpecification } from "../openapi.js";
 import { openApiRoutes } from "../modules/openapi/openapi.routes.js";
+import { VerifyBody } from "../modules/auth/auth.routes.js";
 
 describe("OpenAPI route", () => {
   it("serves the documented API specification as JSON", async () => {
@@ -103,6 +108,7 @@ describe("OpenAPI route", () => {
   it("documents the shared slug format and malformed-slug response", () => {
     const slugPaths = [
       "/creators/{slug}",
+      "/creators/check/{slug}",
       "/resolve/{slug}",
       "/qr/{slug}",
       "/qr/{slug}/png",
@@ -174,5 +180,32 @@ describe("OpenAPI route", () => {
     expect(Object.keys(operation?.responses ?? {})).toEqual(
       expect.arrayContaining(["200", "400", "401", "404"]),
     );
+  });
+
+  it("lets a custom 401 response override the generic secured 401 on /auth/me", () => {
+    const responses = openApiSpecification.paths["/auth/me"]?.get?.responses;
+
+    expect(responses?.["401"]).toMatchObject({
+      description: "Creator account not found.",
+    });
+  });
+
+  it("documents Cache-Control and Content-Disposition headers on QR and CSV export routes", () => {
+    const svgHeaders =
+      openApiSpecification.paths["/qr/{slug}"]?.get?.responses?.["200"]
+        ?.headers;
+    expect(svgHeaders).toHaveProperty("Cache-Control");
+
+    const pngHeaders =
+      openApiSpecification.paths["/qr/{slug}/png"]?.get?.responses?.["200"]
+        ?.headers;
+    expect(pngHeaders).toHaveProperty("Cache-Control");
+    expect(pngHeaders).toHaveProperty("Content-Disposition");
+
+    const csvHeaders =
+      openApiSpecification.paths["/analytics/export"]?.get?.responses?.["200"]
+        ?.headers;
+    expect(csvHeaders).toHaveProperty("Content-Disposition");
+    expect(csvHeaders).toHaveProperty("Cache-Control");
   });
 });

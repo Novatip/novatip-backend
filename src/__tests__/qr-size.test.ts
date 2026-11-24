@@ -51,7 +51,7 @@ describe("GET /qr/:slug/png width", () => {
     );
   });
 
-  it.each(["64", "1024", "2048"])(
+  it.each(["256", "1024", "2048"])(
     "accepts width %s and passes it to the renderer",
     async (width) => {
       const response = await app.inject({
@@ -67,7 +67,7 @@ describe("GET /qr/:slug/png width", () => {
     },
   );
 
-  it.each(["abc", "63", "2049", "512.5"])(
+  it.each(["abc", "255", "2049", "512.5"])(
     "rejects invalid width %s with a clear 400",
     async (width) => {
       const response = await app.inject({

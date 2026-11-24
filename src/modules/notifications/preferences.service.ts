@@ -63,6 +63,18 @@ export async function updateNotificationPreferences(
   creatorId: string,
   input: UpdateNotificationPreferencesInput,
 ): Promise<NotificationPreferences> {
+  // Check that the creator exists first, throwing a 404 if not. This matches
+  // getNotificationPreferences's behavior and prevents a Prisma P2025 error
+  // (record not found) from falling through as a generic 500.
+  const existing = await db.creator.findUnique({
+    where: { id: creatorId },
+    select: { id: true },
+  });
+
+  if (!existing) {
+    throw Object.assign(new Error("Creator not found."), { statusCode: 404 });
+  }
+
   return db.creator.update({
     where: { id: creatorId },
     data: {

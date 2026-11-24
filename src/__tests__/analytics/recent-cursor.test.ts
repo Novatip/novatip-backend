@@ -116,7 +116,7 @@ jest.unstable_mockModule("../../redis.js", () => ({
   cacheInvalidate: async (): Promise<void> => undefined,
 }));
 
-const { encodeTipCursor, decodeTipCursor } =
+const { encodeTipCursor, decodeTipCursor, MAX_CURSOR_LENGTH } =
   await import("../../modules/analytics/cursor.js");
 const { getRecentTips, toRecentTipsPage, RECENT_TIPS_MAX_LIMIT } =
   await import("../../modules/analytics/analytics.service.js");
@@ -164,6 +164,13 @@ describe("tip cursors", () => {
       [
         "a truncated timestamp",
         Buffer.from("2026-03-04|tip_1").toString("base64url"),
+      ],
+      [
+        "an oversized cursor beyond MAX_CURSOR_LENGTH",
+        encodeTipCursor(
+          new Date("2026-03-04T05:06:07.008Z"),
+          "a".repeat(MAX_CURSOR_LENGTH),
+        ),
       ],
     ];
 

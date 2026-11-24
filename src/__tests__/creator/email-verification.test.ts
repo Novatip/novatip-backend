@@ -82,6 +82,9 @@ jest.unstable_mockModule(
 const { creatorRoutes } = await import(
   "../../modules/creator/creator.routes.js"
 );
+const { resetEmailVerificationCooldown } = await import(
+  "../../modules/creator/creator.service.js"
+);
 const { authenticate } = await import("../../modules/auth/authenticate.js");
 
 describe("creator email verification", () => {
@@ -89,6 +92,7 @@ describe("creator email verification", () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    resetEmailVerificationCooldown();
     Object.assign(creator, {
       email: null,
       emailVerifiedAt: null,
@@ -138,6 +142,17 @@ describe("creator email verification", () => {
     expect(confirmation.statusCode).toBe(200);
     expect(confirmation.json()).toEqual({ verified: true });
     expect(creator.emailVerifiedAt).toBeInstanceOf(Date);
+  });
+
+  it("does not trigger repeated sends when repeatedly calling PATCH /me with the same unverified email", async () => {
+    const email = "alice@example.com";
+    const res1 = await updateEmail(email);
+    expect(res1.statusCode).toBe(200);
+    expect(sendEmailVerificationEmailMock).toHaveBeenCalledTimes(1);
+
+    const res2 = await updateEmail(email);
+    expect(res2.statusCode).toBe(200);
+    expect(sendEmailVerificationEmailMock).toHaveBeenCalledTimes(1);
   });
 
   it("verifies a valid signed token and records the verification", async () => {
