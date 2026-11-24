@@ -59,14 +59,23 @@ export function decodeCursor(raw: string): Cursor {
  * Generate a Prisma where clause for rows strictly after the cursor
  * in (timestampField DESC, keyField DESC) order.
  */
-export function cursorFilter(cursor: Cursor, timestampField: string, keyField: string) {
+export function cursorFilter<T extends string, K extends string>(
+  cursor: Cursor,
+  timestampField: T,
+  keyField: K,
+): {
+  OR: [
+    Record<T, { lt: Date }>,
+    Record<T, Date> & Record<K, { lt: string }>,
+  ];
+} {
   return {
     OR: [
-      { [timestampField]: { lt: cursor.timestamp } },
+      { [timestampField]: { lt: cursor.timestamp } } as Record<T, { lt: Date }>,
       {
         [timestampField]: cursor.timestamp,
         [keyField]: { lt: cursor.key },
-      },
+      } as Record<T, Date> & Record<K, { lt: string }>,
     ],
   };
 }

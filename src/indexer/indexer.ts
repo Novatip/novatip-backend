@@ -324,6 +324,7 @@ export async function handleEvent(event: TipEvent): Promise<void> {
   const isNew = await persistTip(event, txHash);
 
   if (isNew) {
+    recordTipIndexed();
     enqueueWebhookDispatch(event);
 
     try {

@@ -722,27 +722,38 @@ export async function rotateWebhookSecrets(
  * error.code on the rejection, so clients can branch on it.
  */
 export const WEBHOOK_SECRET_TOO_SHORT_CODE = "WEBHOOK_SECRET_TOO_SHORT";
+export const WEBHOOK_SECRET_TOO_LONG_CODE = "WEBHOOK_SECRET_TOO_LONG";
 
 /**
- * Floor on a caller-supplied signing secret. The signature is the only thing
- * telling a receiver a delivery really came from Novatip, so a one-character
- * secret would make that guarantee worthless against even a casual guess.
- * Below this, the route rejects the request rather than the service writing
- * a secret too weak to trust — checked here, not only in the route's input
- * schema, so nothing that calls createWebhook or rotateWebhookSecret directly
- * can skip it.
+ * The signing key needs enough characters to resist guessing but a finite
+ * ceiling to keep encrypted storage and HMAC inputs bounded. Both bounds are
+ * checked here as well as in the route schema so direct callers cannot skip
+ * them.
  */
 export const MIN_WEBHOOK_SECRET_LENGTH = 16;
 
+/** Upper bound on caller-supplied signing secrets. */
+export const MAX_WEBHOOK_SECRET_LENGTH = 256;
+
 function assertSecretLength(secret: string): void {
-  if (secret.length >= MIN_WEBHOOK_SECRET_LENGTH) return;
+  if (secret.length < MIN_WEBHOOK_SECRET_LENGTH) {
+    throw Object.assign(
+      new Error(
+        `Webhook secret must be at least ${MIN_WEBHOOK_SECRET_LENGTH} ` +
+          `characters long.`,
+      ),
+      { statusCode: 400, code: WEBHOOK_SECRET_TOO_SHORT_CODE },
+    );
+  }
+
+  if (secret.length <= MAX_WEBHOOK_SECRET_LENGTH) return;
 
   throw Object.assign(
     new Error(
-      `Webhook secret must be at least ${MIN_WEBHOOK_SECRET_LENGTH} ` +
+      `Webhook secret must be at most ${MAX_WEBHOOK_SECRET_LENGTH} ` +
         `characters long.`,
     ),
-    { statusCode: 400, code: WEBHOOK_SECRET_TOO_SHORT_CODE },
+    { statusCode: 400, code: WEBHOOK_SECRET_TOO_LONG_CODE },
   );
 }
 
@@ -770,6 +781,7 @@ export async function createWebhook(
   if (limit === null) {
     return db.webhook.create({
       data: { creatorId, url, secret: encryptedSecret },
+      select: webhookSelect,
     });
   }
 
@@ -781,6 +793,7 @@ export async function createWebhook(
     assertWebhookLimit(existing, limit);
     return tx.webhook.create({
       data: { creatorId, url, secret: encryptedSecret },
+      select: webhookSelect,
     });
   });
 }
