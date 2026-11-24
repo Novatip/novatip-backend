@@ -28,16 +28,6 @@ function getPackageVersion(): string {
   }
 }
 
-function getBuildCommit(): string {
-  const commit =
-    process.env.BUILD_COMMIT ??
-    process.env.GIT_COMMIT ??
-    process.env.npm_package_git_commit ??
-    "";
-
-  return commit.trim() !== "" ? commit.trim() : "unknown";
-}
-
 export const healthRoutes: FastifyPluginAsync = async (app) => {
   // ── GET /live ──────────────────────────────────────────────────────────────
   // Cheap, dependency-free. Answers "is the process running?" — a `down`
@@ -71,7 +61,7 @@ export const healthRoutes: FastifyPluginAsync = async (app) => {
   // package version and git commit being served without exposing any secrets.
   app.get("/version", { config: { rateLimit: false } }, async () => ({
     version: getPackageVersion(),
-    commit: getBuildCommit(),
+    commit: config.buildCommit,
     network: config.stellar.network,
   }));
 };
