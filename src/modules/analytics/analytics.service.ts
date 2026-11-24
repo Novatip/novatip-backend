@@ -25,6 +25,32 @@ import {
 
 const CACHE_TTL = 30; // seconds
 
+export const TIME_SERIES_MIN_DAYS = 1;
+export const TIME_SERIES_MAX_DAYS = 365;
+export const TIME_SERIES_DEFAULT_DAYS = 30;
+
+export const TOP_SUPPORTERS_MIN_LIMIT = 1;
+export const TOP_SUPPORTERS_MAX_LIMIT = 100;
+export const TOP_SUPPORTERS_DEFAULT_LIMIT = 10;
+
+/**
+ * Clamp a numeric input to an integer within [min, max].
+ * Non-finite values (NaN, +/-Infinity), null/undefined, and non-numeric
+ * strings fall back to `fallback`; finite floats are floored before clamping.
+ */
+function clampInt(
+  value: unknown,
+  min: number,
+  max: number,
+  fallback: number,
+): number {
+  if (value === null || value === undefined) return fallback;
+  if (typeof value === "string" && value.trim() === "") return fallback;
+  const num = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(num)) return fallback;
+  return Math.min(Math.max(Math.floor(num), min), max);
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface TipTotals {
@@ -110,6 +136,10 @@ function utcMidnight(d: Date): Date {
  * Daily tip counts and amounts over the last N days.
  * Default window: 30 days.
  *
+ * `days` is clamped to [TIME_SERIES_MIN_DAYS, TIME_SERIES_MAX_DAYS] here as
+ * well as at the route, so a direct caller cannot trigger an unbounded
+ * window or pass NaN into the date arithmetic and SQL query.
+ *
  * Days are UTC calendar days (00:00–23:59:59 UTC), not the caller's local
  * days — see utcMidnight() above. The window always returns exactly `days`
  * points, oldest first, one per UTC day up to and including today; days with
@@ -118,15 +148,21 @@ function utcMidnight(d: Date): Date {
  */
 export async function getTimeSeries(
   creatorId: string,
-  days = 30,
+  days = TIME_SERIES_DEFAULT_DAYS,
 ): Promise<TimeSeriesPoint[]> {
-  const key = `analytics:timeseries:${creatorId}:${days}`;
+  const windowDays = clampInt(
+    days,
+    TIME_SERIES_MIN_DAYS,
+    TIME_SERIES_MAX_DAYS,
+    TIME_SERIES_DEFAULT_DAYS,
+  );
+  const key = `analytics:timeseries:${creatorId}:${windowDays}`;
   const cached = await cacheGet<TimeSeriesPoint[]>(key);
   if (cached) return cached;
 
   const today = utcMidnight(new Date());
   const windowStart = new Date(today);
-  windowStart.setUTCDate(windowStart.getUTCDate() - (days - 1));
+  windowStart.setUTCDate(windowStart.getUTCDate() - (windowDays - 1));
 
   const rows = await db.$queryRaw<TimeSeriesRow[]>`
     SELECT
@@ -148,7 +184,7 @@ export async function getTimeSeries(
   }
 
   const result: TimeSeriesPoint[] = [];
-  for (let i = 0; i < days; i++) {
+  for (let i = 0; i < windowDays; i++) {
     const day = new Date(windowStart);
     day.setUTCDate(day.getUTCDate() + i);
     const date = day.toISOString().slice(0, 10);
@@ -176,12 +212,22 @@ interface TopSupporterRow {
 /**
  * Top N supporters ranked by total amount sent.
  * Default: top 10.
+ *
+ * `limit` is clamped to [TOP_SUPPORTERS_MIN_LIMIT, TOP_SUPPORTERS_MAX_LIMIT]
+ * here as well as at the route, so a direct caller cannot ask for an
+ * unbounded LIMIT or pass NaN into SQL.
  */
 export async function getTopSupporters(
   creatorId: string,
-  limit = 10,
+  limit = TOP_SUPPORTERS_DEFAULT_LIMIT,
 ): Promise<TopSupporter[]> {
-  const key = `analytics:top:${creatorId}:${limit}`;
+  const take = clampInt(
+    limit,
+    TOP_SUPPORTERS_MIN_LIMIT,
+    TOP_SUPPORTERS_MAX_LIMIT,
+    TOP_SUPPORTERS_DEFAULT_LIMIT,
+  );
+  const key = `analytics:top:${creatorId}:${take}`;
   const cached = await cacheGet<TopSupporter[]>(key);
   if (cached) return cached;
 
@@ -194,7 +240,7 @@ export async function getTopSupporters(
     WHERE "creatorId" = ${creatorId}
     GROUP BY "fromAddress"
     ORDER BY SUM(amount::numeric) DESC
-    LIMIT ${limit}
+    LIMIT ${take}
   `;
 
   const result: TopSupporter[] = rows.map((row) => ({

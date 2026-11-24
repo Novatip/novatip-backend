@@ -28,6 +28,15 @@ const DEMO_SPLITS = [
   { to: "GDE6TLQE77OGAPXORP5G5YLRG4FQE2D7ZCD237LVLTAALXAOVV3YTPDS", bps: 3000 },
 ];
 
+/** Shared fixture fields reset on both initial seed and re-seed. */
+const DEMO_CREATOR = {
+  slug: "demo",
+  jarId: "@demo",
+  displayName: "Demo Creator",
+  bio: "A two-person split jar on Stellar testnet. Tips divide 70/30, atomically.",
+  splits: DEMO_SPLITS,
+};
+
 async function main(): Promise<void> {
   const validatedSplits = CreatorSplitsSchema.parse(DEMO_SPLITS);
 

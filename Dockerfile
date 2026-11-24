@@ -57,5 +57,11 @@ USER node
 
 EXPOSE 3001
 
+# Image-level liveness check: uses /api/v1/health/live (dependency-free) rather
+# than /ready so a transient PostgreSQL/Redis outage does not trigger container
+# restart loops. docker-compose.yml overrides this with /ready for local dev.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || 3001) + '/api/v1/health/live', { signal: AbortSignal.timeout(4000) }).then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+
 # Apply any pending migrations, then start the API and indexer.
 CMD ["sh", "-c", "./node_modules/.bin/prisma migrate deploy && node dist/app.js"]
