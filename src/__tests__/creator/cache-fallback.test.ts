@@ -73,4 +73,32 @@ describe("creator lookup when Redis is unavailable", () => {
       60,
     );
   });
+
+  it("returns 404 and does not cache when both cache and database miss", async () => {
+    redisGetMock.mockResolvedValue(null);
+    creatorFindUniqueMock.mockResolvedValue(null);
+
+    await expect(getCreatorBySlug("missing")).rejects.toMatchObject({
+      statusCode: 404,
+    });
+
+    expect(redisSetMock).not.toHaveBeenCalled();
+  });
+
+  it("returns the same PublicCreator with ISO string createdAt on cache miss and hit", async () => {
+    let cachedPayload: string | null = null;
+    redisGetMock.mockImplementation(async () => cachedPayload);
+    redisSetMock.mockImplementation(async (_key, value) => {
+      cachedPayload = value;
+      return "OK";
+    });
+
+    const fromMiss = await getCreatorBySlug("alice");
+    const fromHit = await getCreatorBySlug("alice");
+
+    expect(typeof fromMiss.createdAt).toBe("string");
+    expect(fromMiss.createdAt).toBe("2026-10-20T00:00:00.000Z");
+    expect(fromHit).toEqual(fromMiss);
+    expect(creatorFindUniqueMock).toHaveBeenCalledTimes(1);
+  });
 });

@@ -63,13 +63,13 @@ function operation({
     responses: {
       [successStatus]: success,
       "429": rateLimited,
-      ...extraResponses,
       ...(secured && {
         "401": json(
           "Missing or invalid bearer token.",
           schema("ErrorResponse"),
         ),
       }),
+      ...extraResponses,
     },
   };
 }
@@ -91,7 +91,6 @@ const rateLimited = json(
   schema("RateLimitResponse"),
 );
 
-const slugParameter = pathParameter("slug", "Creator's public slug.");
 const validatedSlugParameter = pathParameter(
   "slug",
   "Creator's public slug: 3–32 lowercase letters, numbers, underscores, or hyphens.",
@@ -215,7 +214,10 @@ export const openApiSpecification = {
     "/auth/challenge": {
       post: operation({
         summary: "Issue a one-time sign-in challenge",
-        success: json("The generated nonce.", schema("ChallengeResponse")),
+        success: json(
+          "The generated challenge containing message and nonce.",
+          schema("ChallengeResponse"),
+        ),
         requestBody: requestBody(schema("ChallengeRequest")),
         extraResponses: {
           "400": validationError,
@@ -268,7 +270,8 @@ export const openApiSpecification = {
           "Availability result.",
           schema("SlugAvailabilityResponse"),
         ),
-        parameters: [slugParameter],
+        parameters: [validatedSlugParameter],
+        extraResponses: { "400": validationError },
       }),
     },
     "/creators/claim": {
@@ -292,7 +295,11 @@ export const openApiSpecification = {
         success: json("The updated creator.", schema("CreatorResponse")),
         requestBody: requestBody(schema("UpdateProfileRequest")),
         secured: true,
-        extraResponses: { "400": validationError, "404": notFound },
+        extraResponses: {
+          "400": validationError,
+          "404": notFound,
+          "429": rateLimited,
+        },
       }),
       delete: operation({
         summary: "Delete the authenticated creator account",
@@ -386,6 +393,13 @@ export const openApiSpecification = {
         summary: "Get a creator tip-page QR code as SVG",
         success: {
           description: "QR code image.",
+          headers: {
+            "Cache-Control": {
+              description:
+                "Caching directive for the generated QR code (`public, max-age=3600`).",
+              schema: { type: "string" },
+            },
+          },
           content: { "image/svg+xml": { schema: { type: "string" } } },
         },
         parameters: [validatedSlugParameter],
@@ -401,6 +415,18 @@ export const openApiSpecification = {
         summary: "Download a creator tip-page QR code as PNG",
         success: {
           description: "PNG QR code image.",
+          headers: {
+            "Cache-Control": {
+              description:
+                "Caching directive for the generated QR code (`public, max-age=3600`).",
+              schema: { type: "string" },
+            },
+            "Content-Disposition": {
+              description:
+                'Download filename (`attachment; filename="novatip-{slug}.png"`).',
+              schema: { type: "string" },
+            },
+          },
           content: {
             "image/png": { schema: { type: "string", format: "binary" } },
           },
@@ -409,10 +435,10 @@ export const openApiSpecification = {
           validatedSlugParameter,
           queryParameter(
             "width",
-            "PNG image width in pixels (64–2048, default 512).",
+            "PNG image width in pixels (256–2048, default 512).",
             {
               type: "integer",
-              minimum: 64,
+              minimum: 256,
               maximum: 2048,
               default: 512,
             },
@@ -502,6 +528,18 @@ export const openApiSpecification = {
           "Streams every tip for the authenticated creator as a CSV attachment. Also reachable as /analytics/csv, /analytics/recent.csv, /analytics/export.csv, /analytics/tips.csv and /analytics/history.csv — documented aliases of this same endpoint (see documentedRouteAliases in openapi.ts).",
         success: {
           description: "CSV file of the creator's tip history.",
+          headers: {
+            "Content-Disposition": {
+              description:
+                'Download filename (`attachment; filename="{slug}-tip-history.csv"`).',
+              schema: { type: "string" },
+            },
+            "Cache-Control": {
+              description:
+                "Caching directive opting out of caching (`no-store`).",
+              schema: { type: "string" },
+            },
+          },
           content: { "text/csv": { schema: { type: "string" } } },
         },
         secured: true,
@@ -542,7 +580,28 @@ export const openApiSpecification = {
             default: 20,
           }),
           paginationParameters[1]!,
+          queryParameter("unread", "Filter to unread notifications only.", {
+            type: "boolean",
+          }),
+          queryParameter("cursor", "Opaque cursor for pagination.", {
+            type: "string",
+            minLength: 1,
+          }),
         ],
+        secured: true,
+        extraResponses: { "400": validationError },
+      }),
+    },
+    "/notifications/read": {
+      post: operation({
+        summary: "Mark notifications as read",
+        description:
+          "Mark specific notifications or all notifications as read. Provide either 'notificationIds' (an array of notification IDs) or 'all: true', but not both.",
+        success: json(
+          "Number of notifications marked as read.",
+          schema("MarkNotificationsReadResponse"),
+        ),
+        requestBody: requestBody(schema("MarkNotificationsReadRequest")),
         secured: true,
         extraResponses: { "400": validationError },
       }),
@@ -637,6 +696,14 @@ export const openApiSpecification = {
             default: 20,
           }),
           paginationParameters[1]!,
+          queryParameter(
+            "success",
+            "Filter delivery attempts by outcome (`true` or `false`).",
+            {
+              type: "string",
+              enum: ["true", "false"],
+            },
+          ),
         ],
         secured: true,
         extraResponses: {
@@ -822,16 +889,20 @@ export const openApiSpecification = {
       },
       ChallengeResponse: {
         type: "object",
-        properties: { nonce: { type: "string" } },
-        required: ["nonce"],
+        properties: {
+          message: { type: "string" },
+          nonce: { type: "string" },
+        },
+        required: ["message", "nonce"],
       },
       VerifyRequest: {
         type: "object",
         properties: {
           walletAddress: { type: "string", minLength: 56, maxLength: 56 },
+          message: { type: "string" },
           signatureHex: { type: "string", minLength: 128, maxLength: 128 },
         },
-        required: ["walletAddress", "signatureHex"],
+        required: ["walletAddress", "message", "signatureHex"],
       },
       VerifyResponse: {
         type: "object",
@@ -976,7 +1047,13 @@ export const openApiSpecification = {
           jarId: { type: "string", minLength: 1 },
           displayName: { type: "string", maxLength: 80 },
           bio: { type: "string", maxLength: 300 },
-          splits: { type: "array", items: schema("Split") },
+          splits: {
+            type: "array",
+            maxItems: 50,
+            description:
+              "Recipients must be unique, total basis points must not exceed 10000, and at most 50 splits may be configured.",
+            items: schema("Split"),
+          },
         },
         required: ["slug"],
       },
@@ -1006,8 +1083,9 @@ export const openApiSpecification = {
           splits: {
             type: "array",
             minItems: 1,
+            maxItems: 50,
             description:
-              "Recipients must be unique, and total basis points must not exceed 10000.",
+              "Recipients must be unique, total basis points must not exceed 10000, and at most 50 splits may be configured.",
             items: schema("Split"),
           },
         },
@@ -1324,6 +1402,8 @@ export const openApiSpecification = {
           },
           sent: { type: "boolean" },
           sentAt: { type: "string", format: "date-time", nullable: true },
+          read: { type: "boolean" },
+          readAt: { type: "string", format: "date-time", nullable: true },
           createdAt: { type: "string", format: "date-time" },
         },
         required: [
@@ -1332,6 +1412,8 @@ export const openApiSpecification = {
           "payload",
           "sent",
           "sentAt",
+          "read",
+          "readAt",
           "createdAt",
         ],
       },
@@ -1339,8 +1421,10 @@ export const openApiSpecification = {
         type: "object",
         properties: {
           notifications: { type: "array", items: schema("Notification") },
+          unreadCount: { type: "integer" },
+          nextCursor: { type: "string", nullable: true },
         },
-        required: ["notifications"],
+        required: ["notifications", "unreadCount", "nextCursor"],
       },
       NotificationPreferences: {
         type: "object",
@@ -1367,6 +1451,32 @@ export const openApiSpecification = {
           },
         },
         required: ["preferences"],
+      },
+      MarkNotificationsReadRequest: {
+        type: "object",
+        properties: {
+          notificationIds: {
+            type: "array",
+            items: { type: "string" },
+            description: "Array of notification IDs to mark as read.",
+          },
+          all: {
+            type: "boolean",
+            description: "Set to true to mark all notifications as read.",
+          },
+        },
+        description:
+          "Must provide either 'notificationIds' or 'all: true', but not both.",
+      },
+      MarkNotificationsReadResponse: {
+        type: "object",
+        properties: {
+          markedRead: {
+            type: "integer",
+            description: "Number of notifications marked as read.",
+          },
+        },
+        required: ["markedRead"],
       },
     },
   },

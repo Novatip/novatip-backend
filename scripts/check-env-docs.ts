@@ -98,7 +98,6 @@ if (!Number.isSafeInteger(minimumJwtSecretLength) || minimumJwtSecretLength < 1)
   invalidComposeJwtSecret = true;
 }
 
-if (missing.length > 0) {
 if (missingFromReadme.length > 0) {
   console.error("README.md is missing these env vars that config.ts reads:");
   for (const key of missingFromReadme) console.error(`  ${key}`);
@@ -117,12 +116,10 @@ if (missingFromEnvExample.length > 0) {
 }
 
 if (
-  missing.length > 0 ||
-  unmarkedRequired.length > 0 ||
-  invalidComposeJwtSecret
   missingFromReadme.length > 0 ||
   unmarkedRequired.length > 0 ||
-  missingFromEnvExample.length > 0
+  missingFromEnvExample.length > 0 ||
+  invalidComposeJwtSecret
 ) {
   process.exitCode = 1;
 } else {

@@ -2,7 +2,7 @@ import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { config } from "../../config.js";
 
-interface ResolvedAddress {
+export interface WebhookDestination {
   address: string;
   family: number;
 }
@@ -160,7 +160,7 @@ export function assertWebhookUrlForRegistration(rawUrl: string): void {
 
 export function assertAddressesArePublic(
   hostname: string,
-  addresses: readonly ResolvedAddress[],
+  addresses: readonly WebhookDestination[],
 ): void {
   if (addresses.length === 0) {
     throw new Error(`Webhook hostname ${hostname} resolved to no addresses.`);
@@ -180,16 +180,23 @@ export async function assertWebhookDestinationAllowed(
   rawUrl: string,
   resolveAddresses: (
     hostname: string,
-  ) => Promise<readonly ResolvedAddress[]> = async (hostname) =>
+  ) => Promise<readonly WebhookDestination[]> = async (hostname) =>
     lookup(hostname, { all: true, verbatim: true }),
-): Promise<void> {
+): Promise<WebhookDestination | undefined> {
   const url = parseHttpsUrl(rawUrl);
-  if (config.webhooks.allowPrivateHosts) return;
+  if (config.webhooks.allowPrivateHosts) return undefined;
 
   const hostname = normalizedHostname(url.hostname);
   assertHostnameIsNotLocal(hostname);
-  if (isIP(hostname) !== 0) return;
+  if (isIP(hostname) !== 0) {
+    return { address: hostname, family: isIP(hostname) };
+  }
 
   const addresses = await resolveAddresses(hostname);
   assertAddressesArePublic(hostname, addresses);
+  const destination = addresses[0];
+  if (destination === undefined) {
+    throw new Error(`Webhook hostname ${hostname} resolved to no addresses.`);
+  }
+  return destination;
 }

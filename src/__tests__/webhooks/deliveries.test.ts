@@ -41,6 +41,8 @@ jest.unstable_mockModule("../../db.js", () => ({
 const {
   listWebhookDeliveries,
   dispatchWebhooks,
+  deleteWebhook,
+  WEBHOOK_SECRET_DECRYPT_FAILED_CODE,
   DEFAULT_DELIVERY_PAGE_SIZE,
   MAX_DELIVERY_PAGE_SIZE,
 } = await import("../../modules/webhooks/webhooks.service.js");
@@ -97,6 +99,33 @@ describe("listWebhookDeliveries ownership", () => {
     const rows = await listWebhookDeliveries(CREATOR, mine.id);
 
     expect(idsOf(rows ?? [])).toEqual([ours.id]);
+  });
+});
+
+describe("deleteWebhook", () => {
+  it("deletes delivery history before removing an owned webhook", async () => {
+    const webhook = fake.seedWebhook({ creatorId: CREATOR });
+    fake.seedDelivery({ webhookId: webhook.id });
+
+    await expect(deleteWebhook(CREATOR, webhook.id)).resolves.toBe(true);
+
+    expect(fake.webhooks.has(webhook.id)).toBe(false);
+    expect(fake.deliveries).toHaveLength(0);
+  });
+
+  it("returns false for another creator's webhook without deleting history", async () => {
+    const webhook = fake.seedWebhook({ creatorId: OTHER_CREATOR });
+    fake.seedDelivery({ webhookId: webhook.id });
+
+    await expect(deleteWebhook(CREATOR, webhook.id)).resolves.toBe(false);
+
+    expect(fake.webhooks.has(webhook.id)).toBe(true);
+    expect(fake.deliveries).toHaveLength(1);
+  });
+
+  it("returns false for a nonexistent webhook", async () => {
+    await expect(deleteWebhook(CREATOR, "wh_missing")).resolves.toBe(false);
+    expect(fake.deliveries).toHaveLength(0);
   });
 });
 
@@ -268,6 +297,25 @@ describe("history of a dispatch that failed", () => {
     // honestly, and the transport error lands in `response` instead.
     expect(rows?.[0]).toMatchObject({ statusCode: null, success: false });
     expect(rows?.[0]?.response).toContain("ECONNREFUSED");
+  });
+
+  it("records a distinct decrypt failure when secret decryption fails", async () => {
+    fake.seedCreator({ id: CREATOR, jarId: "@alice" });
+    const webhook = fake.seedWebhook({
+      creatorId: CREATOR,
+      secret: "novatip:v1:corrupted:tag:ciphertext",
+    });
+
+    await dispatchWebhooks(tip);
+    const rows = await listWebhookDeliveries(CREATOR, webhook.id);
+
+    expect(rows?.[0]).toMatchObject({
+      statusCode: null,
+      success: false,
+      response: WEBHOOK_SECRET_DECRYPT_FAILED_CODE,
+    });
+    expect(rows?.[0]?.response).not.toContain("Error");
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 
   it("truncates an oversized payload before storing the delivery row", async () => {

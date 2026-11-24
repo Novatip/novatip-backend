@@ -43,6 +43,7 @@ jest.unstable_mockModule("../../db.js", () => ({
 
 const {
   rotateWebhookSecret,
+  rotateWebhookSecrets,
   generateWebhookSecret,
   MAX_WEBHOOK_SECRET_LENGTH,
   dispatchWebhooks,
@@ -50,6 +51,12 @@ const {
   listWebhookDeliveries,
   setWebhookEnabled,
 } = await import("../../modules/webhooks/webhooks.service.js");
+
+const {
+  encryptWebhookSecret,
+  decryptWebhookSecret,
+  parseWebhookEncryptionKey,
+} = await import("../../modules/webhooks/secret-crypto.js");
 
 const CREATOR = "creator_alice";
 const OTHER_CREATOR = "creator_bob";
@@ -384,5 +391,29 @@ describe("deliveries after rotation", () => {
     expect(sent.signature).toBe(
       signatureFor(sent.body, rotated!.secret, sent.timestamp),
     );
+  });
+
+  describe("rotateWebhookSecrets key rotation", () => {
+    it("re-encrypts existing secrets under the new encryption key", async () => {
+      const oldKeyHex = "1".repeat(64);
+      const newKeyHex = "2".repeat(64);
+      const oldKey = parseWebhookEncryptionKey(oldKeyHex);
+      const newKey = parseWebhookEncryptionKey(newKeyHex);
+
+      const plaintextSecret = "my-webhook-signing-secret-value";
+      const webhook = fake.seedWebhook({
+        creatorId: CREATOR,
+        secret: encryptWebhookSecret(plaintextSecret, oldKey),
+      });
+
+      const result = await rotateWebhookSecrets(oldKeyHex, newKeyHex);
+      expect(result.total).toBe(1);
+      expect(result.rotated).toBe(1);
+      expect(result.failed).toBe(0);
+
+      const updated = fake.webhooks.get(webhook.id);
+      expect(updated).toBeDefined();
+      expect(decryptWebhookSecret(updated!.secret, newKey)).toBe(plaintextSecret);
+    });
   });
 });

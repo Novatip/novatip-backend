@@ -21,6 +21,8 @@ import {
   updateCreatorSplits,
   isSlugAvailable,
   deleteCreator,
+  isEmailVerificationInCooldown,
+  recordEmailVerificationCooldown,
   type PublicCreator,
 } from "./creator.service.js";
 import { setTipMessageHidden } from "./messages.service.js";
@@ -34,6 +36,7 @@ import {
   validateSlugParam,
 } from "../../utils/validation.js";
 import { CreatorSplitsSchema } from "./creator-splits.schema.js";
+import { registerDedicatedRateLimit } from "../../utils/rate-limit.js";
 
 const RenameSlugBody = z.object({
   slug: z.string().min(3).max(32),
@@ -45,8 +48,8 @@ const ClaimBody = z.object({
   // still checked against it, so an out-of-sync client gets a 400 rather than
   // a creator whose page and on-chain jar disagree.
   jarId: z.string().min(1).optional(),
-  displayName: z.string().max(80).optional(),
-  bio: z.string().max(300).optional(),
+  displayName: nullableText(80, "Display name").optional(),
+  bio: nullableText(300, "Bio").optional(),
   splits: CreatorSplitsSchema.optional(),
 });
 
@@ -96,7 +99,8 @@ export const creatorRoutes: FastifyPluginAsync = async (app) => {
 
   // ── GET /check/:slug — availability ───────────────────────────────────────
   app.get("/check/:slug", async (request, reply) => {
-    const { slug } = request.params as { slug: string };
+    const slug = validateSlugParam(request.params, reply);
+    if (slug === null) return;
 
     // The endpoint stays public, but identity matters here: a released slug
     // is held for its previous owner, and only a token proves the caller is
@@ -105,7 +109,9 @@ export const creatorRoutes: FastifyPluginAsync = async (app) => {
     let viewerId: string | undefined;
     try {
       await request.jwtVerify();
-      viewerId = request.user.sub;
+      if (request.user.purpose === undefined) {
+        viewerId = request.user.sub;
+      }
     } catch {
       // Unauthenticated callers get the hold applied to everyone.
     }
@@ -131,44 +137,68 @@ export const creatorRoutes: FastifyPluginAsync = async (app) => {
   );
 
   // ── PATCH /me — auth required ──────────────────────────────────────────────
-  app.patch(
-    "/me",
-    { onRequest: [app.authenticate] },
-    async (request, reply) => {
-      const body = UpdateProfileBody.safeParse(request.body);
-      if (!body.success) {
-        return reply.status(400).send({ error: body.error.flatten() });
-      }
+  await app.register(async (emailVerificationApp) => {
+    await registerDedicatedRateLimit(emailVerificationApp, {
+      max: config.rateLimits.emailVerification,
+      nameSpace: "novatip-creator-email-verification-rate-limit-",
+      code: "EMAIL_VERIFICATION_RATE_LIMITED",
+      message: "Too many email verification requests. Try again in a minute.",
+      hook: "preHandler",
+      allowList: (request) => {
+        const body = request.body as Record<string, unknown> | null | undefined;
+        return !body || typeof body !== "object" || !body.email;
+      },
+    });
 
-      const { user } = request;
-      const creator = await updateProfile({
-        creatorId: user.sub,
-        ...body.data,
-      });
+    emailVerificationApp.patch(
+      "/me",
+      { onRequest: [app.authenticate] },
+      async (request, reply) => {
+        const body = UpdateProfileBody.safeParse(request.body);
+        if (!body.success) {
+          return reply.status(400).send({ error: body.error.flatten() });
+        }
 
-      if (body.data.email && !creator.emailVerifiedAt) {
-        const token = app.jwt.sign(
-          {
-            sub: creator.id,
-            email: body.data.email,
-            purpose: "creator-email-verification",
-          },
-          { expiresIn: "24h" },
-        );
-        const confirmationUrl = new URL(
-          "/api/v1/creators/email/verify",
-          config.apiBaseUrl,
-        );
-        confirmationUrl.searchParams.set("token", token);
-        await sendEmailVerificationEmail(
-          body.data.email,
-          confirmationUrl.toString(),
-        );
-      }
+        const { user } = request;
+        const creator = await updateProfile({
+          creatorId: user.sub,
+          ...body.data,
+        });
 
-      return reply.send({ creator });
-    },
-  );
+        if (body.data.email && !creator.emailVerifiedAt) {
+          const inCooldown = await isEmailVerificationInCooldown(
+            creator.id,
+            body.data.email,
+          );
+          if (!inCooldown) {
+            await recordEmailVerificationCooldown(
+              creator.id,
+              body.data.email,
+            );
+            const token = app.jwt.sign(
+              {
+                sub: creator.id,
+                email: body.data.email,
+                purpose: "creator-email-verification",
+              },
+              { expiresIn: "24h" },
+            );
+            const confirmationUrl = new URL(
+              "/api/v1/creators/email/verify",
+              config.apiBaseUrl,
+            );
+            confirmationUrl.searchParams.set("token", token);
+            await sendEmailVerificationEmail(
+              body.data.email,
+              confirmationUrl.toString(),
+            );
+          }
+        }
+
+        return reply.send({ creator });
+      },
+    );
+  });
 
   // ── GET /email/verify — confirm a notification email using a signed link ──
   app.get("/email/verify", async (request, reply) => {

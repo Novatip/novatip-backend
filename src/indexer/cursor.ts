@@ -154,3 +154,43 @@ export function isSaturatedLedger<T extends LedgerBound>(
     events.every((e) => e.ledger === events[0]!.ledger)
   );
 }
+
+// ── Retention-window recovery ─────────────────────────────────────────────────
+
+const RETENTION_WINDOW_ERROR_PATTERNS = [
+  /within the ledger range/i,
+  /outside.*retention/i,
+  /retention.*window/i,
+  /ledger.*(?:not available|out of range|too old|pruned|expired)/i,
+  /startLedger.*(?:too old|out of range|before oldest|not available)/i,
+  /oldest.*ledger/i,
+];
+
+/**
+ * Identify permanent Soroban RPC errors indicating `startLedger` has fallen
+ * behind the node's event-retention window and will never succeed on retry.
+ */
+export function isRetentionWindowError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return RETENTION_WINDOW_ERROR_PATTERNS.some((pattern) =>
+    pattern.test(message),
+  );
+}
+
+/**
+ * Compute a safe forward jump when `currentStartLedger` is outside the RPC's
+ * retention window. Starts at `observedHead` and persists `observedHead - 1`
+ * so a restart resumes at `observedHead`.
+ */
+export function planRetentionRecovery(
+  observedHead: number,
+  currentStartLedger: number,
+): IdleAdvance | null {
+  if (!Number.isFinite(observedHead) || observedHead <= currentStartLedger) {
+    return null;
+  }
+  return {
+    nextStartLedger: observedHead,
+    cursorLedger: observedHead - 1,
+  };
+}

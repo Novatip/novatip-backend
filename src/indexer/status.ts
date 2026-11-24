@@ -3,6 +3,12 @@ export interface IndexerPollStatus {
   lastError: string | null;
 }
 
+/**
+ * Generic error string exposed by public health endpoints so internal RPC URLs,
+ * database connection details, and stack traces are never leaked.
+ */
+export const GENERIC_POLL_ERROR = "Indexer poll failed.";
+
 let lastSuccessfulPollAt: string | null = null;
 let lastError: string | null = null;
 
@@ -11,8 +17,8 @@ export function recordSuccessfulPoll(): void {
   lastError = null;
 }
 
-export function recordPollError(error: unknown): void {
-  lastError = error instanceof Error ? error.message : String(error);
+export function recordPollError(_error: unknown): void {
+  lastError = GENERIC_POLL_ERROR;
 }
 
 export function getIndexerPollStatus(): IndexerPollStatus {

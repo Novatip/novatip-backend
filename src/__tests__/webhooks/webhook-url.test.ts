@@ -53,10 +53,22 @@ describe("webhook destination validation", () => {
     ).rejects.toThrow(/private or reserved/);
   });
 
-  it("refuses a hostname that resolves to no addresses and names the hostname", async () => {
+  it("pins the first public resolution instead of using a later private DNS answer", async () => {
+    let resolutions = 0;
+    const resolveAddresses = async () => {
+      resolutions += 1;
+      return resolutions === 1
+        ? [{ address: "93.184.216.34", family: 4 }]
+        : [{ address: "127.0.0.1", family: 4 }];
+    };
+
     await expect(
-      assertWebhookDestinationAllowed("https://empty.example/hook", async () => []),
-    ).rejects.toThrow(/empty\.example.*no addresses/);
+      assertWebhookDestinationAllowed(
+        "https://rebind.example/hook",
+        resolveAddresses,
+      ),
+    ).resolves.toEqual({ address: "93.184.216.34", family: 4 });
+    expect(resolutions).toBe(1);
   });
 
   it("allows a public literal address", () => {

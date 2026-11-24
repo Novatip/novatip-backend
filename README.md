@@ -143,12 +143,14 @@ WEBHOOK_ENCRYPTION_KEY (required in production) - 32-byte AES-256-GCM key as 64 
 WEBHOOK_ALLOW_PRIVATE_HOSTS - Allow webhook URLs to target private IP addresses (default: false; local development only)
 PORT - Server port (default: 3001)
 HOST - Server bind address (default: 0.0.0.0)
-NODE_ENV - development | production (default: development)
+NODE_ENV - development | production | test (default: development)
 REDIS_URL - Redis URL (default: redis://localhost:6379)
+REDIS_MAX_RETRIES_PER_REQUEST - Maximum times a Redis command is retried on disconnect before failing (default: 3)
+REDIS_ENABLE_READY_CHECK - Whether ready check is performed on Redis connection (default: true)
 STELLAR_NETWORK - testnet | mainnet | local (default: testnet)
-SOROBAN_RPC_URL - Soroban RPC endpoint (default: https://soroban-testnet.stellar.org)
-HORIZON_URL - Horizon REST endpoint (default: https://horizon-testnet.stellar.org)
-NETWORK_PASSPHRASE - Stellar network passphrase (default: "Test SDF Network ; September 2015")
+SOROBAN_RPC_URL (required on mainnet) - Soroban RPC endpoint (default on testnet/local: https://soroban-testnet.stellar.org)
+HORIZON_URL (required on mainnet) - Horizon REST endpoint (default on testnet/local: https://horizon-testnet.stellar.org)
+NETWORK_PASSPHRASE (required on mainnet) - Stellar network passphrase (default on testnet/local: "Test SDF Network ; September 2015")
 USDC_CONTRACT_ID (required on mainnet) - USDC Stellar Asset Contract ID (default on testnet/local: CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA, the testnet one)
 INDEXER_START_LEDGER - Ledger to begin indexing from (default: 0)
 INDEXER_RPC_TIMEOUT_MS - Timeout for indexer RPC calls in milliseconds (default: 5000)
@@ -156,6 +158,7 @@ INDEXER_POLL_INTERVAL_MS - How often the indexer polls Soroban RPC for new TipRe
 INDEXER_POLL_LIMIT - Max TipReceived events fetched from Soroban RPC per poll iteration (default: 200)
 UNOWNED_TIP_RETENTION_DAYS - Days unowned tips (no creatorId, e.g. sent before a jar was claimed) are kept before pruning (default: 90, 0 disables pruning)
 CREATOR_SLUG_HOLD_DAYS - Days a slug released by renaming, claiming, or account deletion stays unavailable (default: 90, 0 disables the hold; deleted accounts have no owner exemption)
+CREATOR_SLUG_RENAME_COOLDOWN_DAYS - Minimum days between slug renames; prevents slug squatting by rate-limiting the rename history (default: 0, which disables the cooldown; first rename after claiming has no cooldown)
 PLACEHOLDER_CREATOR_RETENTION_DAYS - Days before an abandoned sign-in placeholder (unclaimed user_xxxxxxxx slug, no tips, webhooks, notifications or released slugs) becomes eligible for deletion (default: 30, 0 disables the job)
 PLACEHOLDER_CREATOR_PRUNE_BATCH_SIZE - Rows deleted per statement (default: 500)
 PLACEHOLDER_CREATOR_PRUNE_INTERVAL_MINUTES - How often the placeholder pruner runs (default: 60)
@@ -163,7 +166,7 @@ MAX_WEBHOOKS_PER_CREATOR - Most webhooks one creator may register (default: 5, 0
 WEBHOOK_DELIVERY_CONCURRENCY - Maximum webhook HTTP requests in flight across the process (default: 10)
 WEBHOOK_TIMEOUT_MS - Timeout for a webhook endpoint to answer before the delivery is recorded as failed, in milliseconds (default: 5000)
 WEBHOOK_MAX_BODY_SIZE - Max response body bytes captured in delivery logs (default: 1024)
-WEBHOOK_MAX_PAYLOAD_SIZE - Max stored delivery payload size in bytes (default: 2048)
+WEBHOOK_MAX_PAYLOAD_SIZE - Max stored delivery payload size in bytes (default: 2048, minimum: 2)
 WEBHOOK_DELIVERY_RETENTION_DAYS - Prune successful deliveries older than this (default: 30, 0 disables)
 WEBHOOK_DELIVERY_FAILURE_RETENTION_DAYS - Prune failed deliveries older than this (default: 90, 0 disables)
 NOTIFICATION_RETENTION_DAYS - Days notification rows are kept (default: 90, 0 keeps them forever)
@@ -179,11 +182,12 @@ AUTH_VERIFY_RATE_LIMIT - Per-IP cap on POST /auth/verify, req/min (default: 5)
 QR_RATE_LIMIT - Per-IP cap on the QR endpoints, req/min (default: 10)
 RESOLVE_RATE_LIMIT - Per-IP cap on GET /resolve/:slug, req/min (default: 30)
 PUBLIC_RECENT_RATE_LIMIT - Per-IP cap on GET /public/:slug/recent, req/min (default: 30)
+EMAIL_VERIFICATION_RATE_LIMIT - Per-IP cap on creator email verification requests via PATCH /creators/me, req/min (default: 5)
 APP_BASE_URL - Frontend base URL (default: http://localhost:3000)
 API_BASE_URL - Public backend base URL for email confirmation links (default: http://localhost:3001)
 CORS_ALLOWED_ORIGINS - Comma-separated origins allowed through CORS in production (default: just APP_BASE_URL; ignored outside production, where any origin is allowed)
 METRICS_ENABLED - Enable Prometheus metrics endpoint at /metrics (default: false)
-METRICS_TOKEN - Bearer token for /metrics authentication; if empty, the endpoint should bind to an internal address only (default: "")
+METRICS_TOKEN - Bearer token for /metrics authentication; if empty, /metrics is served unauthenticated and must be protected by external network controls (default: "")
 
 ## Metrics
 
@@ -198,8 +202,7 @@ Metrics can be protected in two ways:
    include `Authorization: Bearer <token>`. This is suitable when the metrics
    endpoint is exposed publicly or to a monitoring system.
 
-2. **Network binding** - Leave `METRICS_TOKEN` empty and bind the server to an
-   internal address accessible only to your monitoring infrastructure.
+2. **Network access control** - Leave `METRICS_TOKEN` empty only if external network controls (such as firewall rules, reverse proxy blocks, or binding `HOST` to a loopback/private interface) prevent unauthorized access to `config.port`. The server does not bind `/metrics` to a separate internal interface automatically.
 
 ### Available metrics
 
@@ -310,7 +313,7 @@ misattribute those records. This deletion cannot remove the creator's on-chain
 jar registration.
 
 GET /qr/:slug - QR code SVG
-GET /qr/:slug/png - QR code PNG download; optional `?width=` in pixels (64–2048, default 512)
+GET /qr/:slug/png - QR code PNG download; optional `?width=` in pixels (256–2048, default 512)
 GET /resolve/:slug - Full tip-page data
 
 Tip URLs: the canonical tip page URL is APP_BASE_URL/:slug (no "@" prefix —
@@ -491,8 +494,14 @@ local development and should remain off in production.
 Webhook secrets are stored as AES-256-GCM ciphertext. Set
 `WEBHOOK_ENCRYPTION_KEY` to a unique 32-byte key encoded as 64 hex characters;
 the server encrypts existing plaintext webhook secrets during startup before
-accepting requests. Back up this key securely: losing or changing it makes the
-stored secrets unusable.
+accepting requests.
+
+To rotate `WEBHOOK_ENCRYPTION_KEY`:
+1. Generate a new 32-byte key: `openssl rand -hex 32`.
+2. Run the key-rotation script to re-encrypt existing stored secrets:
+   `OLD_WEBHOOK_ENCRYPTION_KEY=<old_hex> WEBHOOK_ENCRYPTION_KEY=<new_hex> npx tsx scripts/rotate-webhook-key.ts`
+   (or pass the keys as positional arguments: `npx tsx scripts/rotate-webhook-key.ts <old_hex> <new_hex>`).
+3. Update `WEBHOOK_ENCRYPTION_KEY` in your environment config and restart the service.
 
 POST /webhooks is capped at MAX_WEBHOOKS_PER_CREATOR endpoints per creator
 (default 5). Registering beyond it returns 409 with error.code

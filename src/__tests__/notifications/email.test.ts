@@ -71,8 +71,11 @@ jest.unstable_mockModule("../../db.js", () => ({
 }));
 
 const { config } = await import("../../config.js");
-const { sendPendingTipDigests, sendTipNotification } =
-  await import("../../modules/notifications/email.service.js");
+const {
+  sendPendingTipDigests,
+  sendTipNotification,
+  sendEmailVerificationEmail,
+} = await import("../../modules/notifications/email.service.js");
 
 describe("sendTipNotification", () => {
   beforeEach(() => {
@@ -341,6 +344,7 @@ describe("sendTipNotification", () => {
           from: tipEvent.from,
           amount: tipEvent.amount.toString(),
           ledger: tipEvent.ledger,
+          txHash: tipEvent.txHash,
         }),
       }),
       select: { id: true },
@@ -425,5 +429,101 @@ describe("sendTipNotification", () => {
       },
       data: { sentAt: new Date("2026-10-20T12:05:00.000Z") },
     });
+  });
+
+  it("includes txHash in the stored tip notification payload", async () => {
+    mockDb.creator.findUnique.mockResolvedValue({
+      id: "creator_1",
+      slug: "alice",
+      displayName: "Alice",
+      email: "alice@example.com",
+      emailEnabled: false,
+      emailVerifiedAt: null,
+    });
+
+    await sendTipNotification(tipEvent);
+
+    expect(mockDb.notification.create).toHaveBeenCalledWith({
+      data: {
+        creatorId: "creator_1",
+        type: "TIP_RECEIVED",
+        payload: {
+          from: tipEvent.from,
+          amount: tipEvent.amount.toString(),
+          message: tipEvent.message,
+          ledger: tipEvent.ledger,
+          timestamp: tipEvent.timestamp,
+          txHash: tipEvent.txHash,
+        },
+      },
+      select: { id: true },
+    });
+  });
+});
+
+describe("sendEmailVerificationEmail", () => {
+  const email = "creator@example.com";
+  const confirmationUrl =
+    "https://app.novatip.xyz/verify?token=eyJh...&source=email<>&test=\"quoted\"";
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockSend.mockResolvedValue({ error: null });
+  });
+
+  it("sends a verification email with plain text and escaped HTML", async () => {
+    await sendEmailVerificationEmail(email, confirmationUrl);
+
+    expect(mockSend).toHaveBeenCalledTimes(1);
+    const payload = mockSend.mock.calls[0]?.[0];
+    expect(payload).toBeDefined();
+    expect(payload?.from).toBe(config.resend.from);
+    expect(payload?.to).toEqual([email]);
+    expect(payload?.subject).toBe("Confirm your Novatip notification email");
+
+    // Text part contains unescaped confirmation URL
+    expect(payload?.text).toContain(confirmationUrl);
+    expect(payload?.text).toContain("This link expires in 24 hours.");
+
+    // HTML part contains properly escaped confirmation URL in href
+    expect(payload?.html).toContain(
+      'href="https://app.novatip.xyz/verify?token=eyJh...&amp;source=email&lt;&gt;&amp;test=&quot;quoted&quot;"',
+    );
+    expect(payload?.html).toContain("Confirm email address");
+  });
+
+  it("throws 503 EMAIL_DELIVERY_UNAVAILABLE when resend.apiKey is not configured", async () => {
+    const originalApiKey = config.resend.apiKey;
+    try {
+      (config.resend as { apiKey?: string }).apiKey = "";
+
+      await expect(
+        sendEmailVerificationEmail(email, confirmationUrl),
+      ).rejects.toMatchObject({
+        message: "Email delivery is not configured.",
+        statusCode: 503,
+        code: "EMAIL_DELIVERY_UNAVAILABLE",
+      });
+
+      expect(mockSend).not.toHaveBeenCalled();
+    } finally {
+      (config.resend as { apiKey?: string }).apiKey = originalApiKey;
+    }
+  });
+
+  it("throws 502 EMAIL_DELIVERY_FAILED when Resend returns an error", async () => {
+    mockSend.mockResolvedValueOnce({
+      error: new Error("Rate limit exceeded"),
+    });
+
+    await expect(
+      sendEmailVerificationEmail(email, confirmationUrl),
+    ).rejects.toMatchObject({
+      message: "Could not send the email verification message.",
+      statusCode: 502,
+      code: "EMAIL_DELIVERY_FAILED",
+    });
+
+    expect(mockSend).toHaveBeenCalledTimes(1);
   });
 });

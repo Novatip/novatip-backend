@@ -17,11 +17,29 @@ describe("global error handler", () => {
   beforeAll(async () => {
     server = await buildServer();
     server.get(
+      "/test-bad-request",
+      { config: { rateLimit: false } },
+      async () => {
+        throw Object.assign(new Error("Invalid input"), {
+          statusCode: 400,
+        });
+      },
+    );
+    server.get(
       "/test-client-error",
       { config: { rateLimit: false } },
       async () => {
         throw Object.assign(new Error("Missing test resource"), {
           statusCode: 404,
+        });
+      },
+    );
+    server.get(
+      "/test-conflict",
+      { config: { rateLimit: false } },
+      async () => {
+        throw Object.assign(new Error("Slug already taken"), {
+          statusCode: 409,
         });
       },
     );
@@ -35,34 +53,56 @@ describe("global error handler", () => {
     await server.ready();
   });
 
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
   afterAll(async () => {
     if (server) await server.close();
   });
 
-  it("logs client errors at warn and server errors at error with their stack", async () => {
+  it("logs 400, 404, and 409 client errors at warn and never at error level", async () => {
     const warn = jest.spyOn(server.log, "warn");
     const error = jest.spyOn(server.log, "error");
 
-    const clientResponse = await server.inject({
-      method: "GET",
-      url: "/test-client-error",
-    });
+    const cases = [
+      { url: "/test-bad-request", statusCode: 400, message: "Invalid input" },
+      { url: "/test-client-error", statusCode: 404, message: "Missing test resource" },
+      { url: "/test-conflict", statusCode: 409, message: "Slug already taken" },
+    ];
+
+    for (const testCase of cases) {
+      const response = await server.inject({
+        method: "GET",
+        url: testCase.url,
+      });
+
+      expect(response.statusCode).toBe(testCase.statusCode);
+      expect(warn).toHaveBeenCalledWith(
+        {
+          err: expect.objectContaining({
+            message: testCase.message,
+          }),
+          url: testCase.url,
+        },
+        "Client error",
+      );
+    }
+
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it("logs 500 server errors at error level with their stack", async () => {
+    const warn = jest.spyOn(server.log, "warn");
+    const error = jest.spyOn(server.log, "error");
+
     const serverResponse = await server.inject({
       method: "GET",
       url: "/test-server-error",
     });
 
-    expect(clientResponse.statusCode).toBe(404);
     expect(serverResponse.statusCode).toBe(500);
-    expect(warn).toHaveBeenCalledWith(
-      {
-        err: expect.objectContaining({
-          message: "Missing test resource",
-        }),
-        url: "/test-client-error",
-      },
-      "Client error",
-    );
+    expect(warn).not.toHaveBeenCalled();
     expect(error).toHaveBeenCalledWith(
       {
         err: expect.objectContaining({

@@ -41,6 +41,11 @@ const cacheInvalidateMock = jest.fn<(key: string) => Promise<void>>();
 // successful one; both modelled here so no row is held in this file.
 const releasedFindUniqueMock =
   jest.fn<(args: { where: { slug: string } }) => Promise<null>>();
+const releasedFindFirstMock =
+  jest.fn<(args: {
+    where: { previousOwnerId: string };
+    orderBy: { releasedAt: "desc" };
+  }) => Promise<{ slug: string; previousOwnerId: string; releasedAt: Date } | null>>();
 const releasedUpsertMock = jest.fn<(args: unknown) => Promise<unknown>>();
 
 jest.unstable_mockModule("../../db.js", () => ({
@@ -48,6 +53,7 @@ jest.unstable_mockModule("../../db.js", () => ({
     creator: { findUnique: findUniqueMock, update: updateMock },
     releasedSlug: {
       findUnique: releasedFindUniqueMock,
+      findFirst: releasedFindFirstMock,
       upsert: releasedUpsertMock,
     },
   },
@@ -93,7 +99,12 @@ beforeEach(() => {
   updateMock.mockReset();
   cacheInvalidateMock.mockReset();
   releasedFindUniqueMock.mockReset().mockResolvedValue(null);
+  releasedFindFirstMock.mockReset().mockResolvedValue(null);
   releasedUpsertMock.mockReset();
+  
+  // Reset config to default (cooldown disabled)
+  process.env["CREATOR_SLUG_RENAME_COOLDOWN_DAYS"] = "0";
+  jest.resetModules();
 });
 
 describe("renameSlug validation", () => {
@@ -203,5 +214,127 @@ describe("successful renameSlug", () => {
     ).rejects.toMatchObject({ statusCode: 409, code: "SLUG_TAKEN" });
 
     expect(cacheInvalidateMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("rename cooldown", () => {
+  beforeEach(() => {
+    // Enable cooldown for these tests
+    process.env["CREATOR_SLUG_RENAME_COOLDOWN_DAYS"] = "30";
+  });
+
+  test("allows first rename after claiming (no previous release)", async () => {
+    findUniqueMock
+      .mockResolvedValueOnce(row({ id: CREATOR, slug: "alice" }))
+      .mockResolvedValueOnce(null);
+    releasedFindFirstMock.mockResolvedValue(null); // No previous renames
+    updateMock.mockResolvedValue(row({ id: CREATOR, slug: "alicia" }));
+
+    const result = await renameSlug({ creatorId: CREATOR, slug: "alicia" });
+    expect(result.slug).toBe("alicia");
+  });
+
+  test("allows rename after cooldown period has elapsed", async () => {
+    const thirtyOneDaysAgo = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000);
+    
+    findUniqueMock
+      .mockResolvedValueOnce(row({ id: CREATOR, slug: "alice" }))
+      .mockResolvedValueOnce(null);
+    releasedFindFirstMock.mockResolvedValue({
+      slug: "oldslug",
+      previousOwnerId: CREATOR,
+      releasedAt: thirtyOneDaysAgo,
+    });
+    updateMock.mockResolvedValue(row({ id: CREATOR, slug: "alicia" }));
+
+    const result = await renameSlug({ creatorId: CREATOR, slug: "alicia" });
+    expect(result.slug).toBe("alicia");
+  });
+
+  test("rejects rename inside cooldown with 429 RENAME_COOLDOWN", async () => {
+    const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);
+    
+    findUniqueMock.mockResolvedValueOnce(row({ id: CREATOR, slug: "alice" }));
+    releasedFindFirstMock.mockResolvedValue({
+      slug: "oldslug",
+      previousOwnerId: CREATOR,
+      releasedAt: tenDaysAgo,
+    });
+
+    await expect(
+      renameSlug({ creatorId: CREATOR, slug: "alicia" }),
+    ).rejects.toMatchObject({
+      statusCode: 429,
+      code: "RENAME_COOLDOWN",
+    });
+
+    expect(updateMock).not.toHaveBeenCalled();
+    expect(cacheInvalidateMock).not.toHaveBeenCalled();
+  });
+
+  test("429 response includes nextAllowedAt timestamp", async () => {
+    const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);
+    
+    findUniqueMock.mockResolvedValueOnce(row({ id: CREATOR, slug: "alice" }));
+    releasedFindFirstMock.mockResolvedValue({
+      slug: "oldslug",
+      previousOwnerId: CREATOR,
+      releasedAt: tenDaysAgo,
+    });
+
+    try {
+      await renameSlug({ creatorId: CREATOR, slug: "alicia" });
+      fail("Should have thrown");
+    } catch (error: unknown) {
+      expect(error).toMatchObject({
+        statusCode: 429,
+        code: "RENAME_COOLDOWN",
+        nextAllowedAt: expect.any(String),
+      });
+      
+      // Verify nextAllowedAt is a valid ISO date
+      const nextDate = new Date((error as { nextAllowedAt: string }).nextAllowedAt);
+      expect(nextDate.getTime()).toBeGreaterThan(Date.now());
+    }
+  });
+
+  test("cooldown disabled (0 days) allows unlimited renames", async () => {
+    process.env["CREATOR_SLUG_RENAME_COOLDOWN_DAYS"] = "0";
+    
+    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    
+    findUniqueMock
+      .mockResolvedValueOnce(row({ id: CREATOR, slug: "alice" }))
+      .mockResolvedValueOnce(null);
+    releasedFindFirstMock.mockResolvedValue({
+      slug: "oldslug",
+      previousOwnerId: CREATOR,
+      releasedAt: oneDayAgo,
+    });
+    updateMock.mockResolvedValue(row({ id: CREATOR, slug: "alicia" }));
+
+    const result = await renameSlug({ creatorId: CREATOR, slug: "alicia" });
+    expect(result.slug).toBe("alicia");
+  });
+
+  test("error message states the date when next rename is allowed", async () => {
+    const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);
+    const expectedNextDate = new Date(tenDaysAgo.getTime() + 30 * 24 * 60 * 60 * 1000);
+    
+    findUniqueMock.mockResolvedValueOnce(row({ id: CREATOR, slug: "alice" }));
+    releasedFindFirstMock.mockResolvedValue({
+      slug: "oldslug",
+      previousOwnerId: CREATOR,
+      releasedAt: tenDaysAgo,
+    });
+
+    try {
+      await renameSlug({ creatorId: CREATOR, slug: "alicia" });
+      fail("Should have thrown");
+    } catch (error: unknown) {
+      const message = (error as Error).message;
+      expect(message).toContain(expectedNextDate.toISOString().slice(0, 10));
+      expect(message).toMatch(/You may rename again on \d{4}-\d{2}-\d{2}/);
+    }
   });
 });

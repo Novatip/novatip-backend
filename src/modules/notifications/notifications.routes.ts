@@ -54,6 +54,21 @@ const PreferencesBody = z.object({
   }),
 });
 
+const MarkReadBody = z.object({
+  notificationIds: z.array(z.string()).optional(),
+  all: z.boolean().optional(),
+}).refine(
+  (data) => {
+    // Either notificationIds or all must be provided, but not both
+    const hasIds = data.notificationIds !== undefined && data.notificationIds.length > 0;
+    const hasAll = data.all === true;
+    return hasIds !== hasAll; // XOR
+  },
+  {
+    message: "Must provide either 'notificationIds' or 'all: true', but not both",
+  }
+);
+
 export const notificationRoutes: FastifyPluginAsync = async (app) => {
   // Every route here reads or writes the signed-in creator's own data.
   app.addHook("onRequest", app.authenticate);
@@ -66,13 +81,34 @@ export const notificationRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const { user } = request;
-    const notifications = await listNotifications(
+    const page = await listNotifications(
       user.sub,
       query.data.limit,
       query.data.offset,
+      query.data.unread ?? false,
+      query.data.cursor ?? null,
     );
 
-    return reply.send({ notifications });
+    return reply.send(page);
+  });
+
+  // ── POST /read ─────────────────────────────────────────────────────────────
+  app.post("/read", async (request, reply) => {
+    const body = MarkReadBody.safeParse(request.body);
+    if (!body.success) {
+      return reply.status(400).send({ error: body.error.flatten() });
+    }
+
+    const { user } = request;
+    let count: number;
+
+    if (body.data.all) {
+      count = await markAllNotificationsRead(user.sub);
+    } else {
+      count = await markNotificationsRead(user.sub, body.data.notificationIds!);
+    }
+
+    return reply.send({ markedRead: count });
   });
 
   // ── GET /preferences ──────────────────────────────────────────────────────

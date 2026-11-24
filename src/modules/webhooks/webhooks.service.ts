@@ -21,6 +21,7 @@ import { logger } from "../../utils/logger.js";
 import { assertWebhookLimit, webhookLimit } from "./limit.js";
 import { notifyWebhookFailure } from "../notifications/webhook-failure.service.js";
 import {
+  recordWebhookDecryptError,
   recordWebhookDelivery,
   recordWebhookDuration,
 } from "../metrics/metrics.service.js";
@@ -34,6 +35,7 @@ import {
   assertWebhookDestinationAllowed,
   assertWebhookUrlForRegistration,
 } from "./webhook-url.js";
+import { postWebhook } from "./webhook-request.js";
 
 const webhookLogger = logger.child({ component: "webhook" });
 
@@ -47,9 +49,14 @@ function boundPayload(payload: DeliveryPayload, limit: number): object {
   const json = JSON.stringify(payload);
   if (Buffer.byteLength(json, "utf8") <= limit) return payload as object;
 
-  // The test ping is fixed-size and cannot reach the limit, so there is
-  // nothing to trim and no variable field to trim it from.
-  if (payload.event !== "tip.received") return payload as object;
+  const diagnostic = { event: payload.event, truncated: true };
+  if (Buffer.byteLength(JSON.stringify(diagnostic), "utf8") <= limit) {
+    return diagnostic;
+  }
+
+  if (payload.event !== "tip.received") {
+    return {};
+  }
 
   // Truncate message first — it is the largest variable field.
   const truncated: WebhookPayload = {
@@ -61,7 +68,11 @@ function boundPayload(payload: DeliveryPayload, limit: number): object {
 
   // Still too large — strip amountRaw as well.
   const stripped: WebhookPayload = { ...truncated, amountRaw: "" };
-  return stripped as object;
+  if (Buffer.byteLength(JSON.stringify(stripped), "utf8") <= limit) {
+    return stripped as object;
+  }
+
+  return {};
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -282,17 +293,62 @@ async function deliver(
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const startTime = Date.now();
 
+  let secret: string;
+  try {
+    secret = decryptWebhookSecret(
+      webhook.secret,
+      getWebhookEncryptionKey(),
+    );
+  } catch (err) {
+    webhookLogger.error(
+      { err, webhookId: webhook.id },
+      "failed to decrypt webhook secret",
+    );
+    recordWebhookDecryptError();
+    recordWebhookDelivery("failure");
+    recordWebhookDuration((Date.now() - startTime) / 1000);
+
+    let attempt: DeliveryOutcome | undefined;
+    try {
+      attempt = await db.webhookDelivery.create({
+        data: {
+          webhookId: webhook.id,
+          statusCode: null,
+          success: false,
+          payload: boundPayload(payload, config.webhooks.maxPayloadSize),
+          response: WEBHOOK_SECRET_DECRYPT_FAILED_CODE,
+        },
+        select: {
+          statusCode: true,
+          success: true,
+          response: true,
+          attemptedAt: true,
+        },
+      });
+    } catch (recordErr) {
+      webhookLogger.error(
+        { err: recordErr, webhookId: webhook.id },
+        "failed to record webhook delivery",
+      );
+    }
+
+    return (
+      attempt ?? {
+        statusCode: null,
+        success: false,
+        response: WEBHOOK_SECRET_DECRYPT_FAILED_CODE,
+        attemptedAt: new Date(startTime),
+      }
+    );
+  }
+
   let statusCode: number | undefined;
   let responseText: string | undefined;
   let success = false;
   let timer: NodeJS.Timeout | undefined;
 
   try {
-    await assertWebhookDestinationAllowed(webhook.url);
-    const secret = decryptWebhookSecret(
-      webhook.secret,
-      getWebhookEncryptionKey(),
-    );
+    const destination = await assertWebhookDestinationAllowed(webhook.url);
     const signature = sign(body, secret, timestamp);
     const controller = new AbortController();
     timer = setTimeout(
@@ -305,18 +361,22 @@ async function deliver(
     // endpoint to answer 301/302 to an insecure HTTP URL or internal network
     // destination (SSRF), carrying the signed payload with it. A redirect is
     // captured with its 3xx status code and recorded as a failed delivery.
-    const res = await fetch(webhook.url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Novatip-Signature": `sha256=${signature}`,
-        "X-Novatip-Timestamp": timestamp,
-        "User-Agent": "Novatip-Webhook/1.0",
+    const res = await postWebhook(
+      webhook.url,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Novatip-Signature": `sha256=${signature}`,
+          "X-Novatip-Timestamp": timestamp,
+          "User-Agent": "Novatip-Webhook/1.0",
+        },
+        body,
+        signal: controller.signal,
+        redirect: "manual",
       },
-      body,
-      signal: controller.signal,
-      redirect: "manual",
-    });
+      destination,
+    );
 
     statusCode = res.status;
     responseText = await readResponseBody(
@@ -587,6 +647,65 @@ export async function migrateWebhookSecrets(): Promise<number> {
 }
 
 /**
+ * error.code / response identifier recorded when webhook secret decryption fails.
+ */
+export const WEBHOOK_SECRET_DECRYPT_FAILED_CODE = "WEBHOOK_SECRET_DECRYPT_FAILED";
+
+/**
+ * Rotate encryption key for all encrypted webhook secrets.
+ * Decrypts existing secrets using `oldKey` and re-encrypts them using `newKey`
+ * (defaults to the currently configured WEBHOOK_ENCRYPTION_KEY).
+ */
+export async function rotateWebhookSecrets(
+  oldKeyInput: Buffer | string,
+  newKeyInput?: Buffer | string,
+): Promise<{ total: number; rotated: number; failed: number }> {
+  const oldKey =
+    typeof oldKeyInput === "string"
+      ? parseWebhookEncryptionKey(oldKeyInput)
+      : oldKeyInput;
+  const newKey =
+    newKeyInput !== undefined
+      ? typeof newKeyInput === "string"
+        ? parseWebhookEncryptionKey(newKeyInput)
+        : newKeyInput
+      : getWebhookEncryptionKey();
+
+  const rows = await db.webhook.findMany({
+    select: { id: true, secret: true },
+  });
+
+  let rotated = 0;
+  let failed = 0;
+  for (const row of rows) {
+    if (!isEncryptedWebhookSecret(row.secret)) {
+      continue;
+    }
+    try {
+      const plaintext = decryptWebhookSecret(row.secret, oldKey);
+      const reencrypted = encryptWebhookSecret(plaintext, newKey);
+      const result = await db.webhook.updateMany({
+        where: { id: row.id, secret: row.secret },
+        data: { secret: reencrypted },
+      });
+      rotated += result.count;
+    } catch (err) {
+      failed++;
+      webhookLogger.error(
+        { err, webhookId: row.id },
+        "failed to re-encrypt webhook secret during key rotation",
+      );
+    }
+  }
+
+  webhookLogger.info(
+    { total: rows.length, rotated, failed },
+    "completed webhook secret key rotation",
+  );
+  return { total: rows.length, rotated, failed };
+}
+
+/**
  * error.code on the rejection, so clients can branch on it.
  */
 export const WEBHOOK_SECRET_TOO_SHORT_CODE = "WEBHOOK_SECRET_TOO_SHORT";
@@ -628,9 +747,8 @@ function assertSecretLength(secret: string): void {
 /**
  * Register a webhook, rejecting the request once the creator is at the cap.
  *
- * The count and the insert run in one interactive transaction: two concurrent
- * registrations that each read the pre-insert count would otherwise both pass
- * the check and leave the creator one over the limit.
+ * The creator row lock makes the count and insert serial per creator under
+ * READ COMMITTED, so concurrent registrations cannot both pass a stale count.
  */
 export async function createWebhook(
   creatorId: string,
@@ -655,6 +773,9 @@ export async function createWebhook(
   }
 
   return db.$transaction(async (tx) => {
+    await tx.$queryRaw`
+      SELECT "id" FROM "Creator" WHERE "id" = ${creatorId} FOR UPDATE
+    `;
     const existing = await tx.webhook.count({ where: { creatorId } });
     assertWebhookLimit(existing, limit);
     return tx.webhook.create({
@@ -844,8 +965,17 @@ export async function deleteWebhook(
   creatorId: string,
   webhookId: string,
 ): Promise<boolean> {
-  const { count } = await db.webhook.deleteMany({
-    where: { id: webhookId, creatorId },
+  return db.$transaction(async (tx) => {
+    const webhook = await tx.webhook.findFirst({
+      where: { id: webhookId, creatorId },
+      select: { id: true },
+    });
+    if (!webhook) return false;
+
+    await tx.webhookDelivery.deleteMany({ where: { webhookId } });
+    const { count } = await tx.webhook.deleteMany({
+      where: { id: webhookId, creatorId },
+    });
+    return count > 0;
   });
-  return count > 0;
 }

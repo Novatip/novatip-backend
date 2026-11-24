@@ -75,7 +75,9 @@ jest.unstable_mockModule("../../redis.js", () => ({
   disconnectRedis: async (): Promise<void> => undefined,
 }));
 
-const { claimSlug } = await import("../../modules/creator/creator.service.js");
+const { claimSlug, updateProfile, updateCreatorSplits } = await import(
+  "../../modules/creator/creator.service.js"
+);
 
 const CREATOR = "creator_alice";
 const OTHER_CREATOR = "creator_bob";
@@ -99,6 +101,13 @@ function uniqueConstraintError(
   return new Prisma.PrismaClientKnownRequestError(
     `Unique constraint failed on the fields: (${target.join(", ")})`,
     { code: "P2002", clientVersion: "5.15.0", meta: { target } },
+  );
+}
+
+function recordNotFoundError(): Prisma.PrismaClientKnownRequestError {
+  return new Prisma.PrismaClientKnownRequestError(
+    "Record to update not found.",
+    { code: "P2025", clientVersion: "5.15.0" },
   );
 }
 
@@ -273,6 +282,21 @@ describe("claiming a free slug", () => {
     ).resolves.toMatchObject({ slug: "newslug" });
 
     expect(cacheInvalidateMock).toHaveBeenCalledWith("creator:newslug");
+  });
+});
+
+describe("updateCreatorSplits", () => {
+  it("writes the splits and invalidates the creator cache", async () => {
+    const splits = [{ to: OTHER_CREATOR, bps: 10_000 }];
+    updateMock.mockResolvedValue(row());
+
+    await updateCreatorSplits(CREATOR, splits);
+
+    expect(updateMock).toHaveBeenCalledWith({
+      where: { id: CREATOR },
+      data: { splits },
+    });
+    expect(cacheInvalidateMock).toHaveBeenCalledWith("creator:alice");
   });
 });
 

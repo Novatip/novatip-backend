@@ -1,24 +1,15 @@
 /**
  * analytics/cursor.ts
  *
- * Opaque cursors for paging a creator's tips newest-first.
- *
- * Offset paging is wrong for a feed that grows at the head: a tip indexed
- * between two requests shifts every subsequent page down by one, so a client
- * scrolling back through their history sees a row twice and misses the row
- * after it. A cursor keyed on the row's own ordering has no such window.
- *
- * The ordering is ("ledgerAt" DESC, <key> DESC). ledgerAt alone is not unique —
- * several tips can share a ledger close time — so a unique column is carried
- * alongside it as a tiebreaker; without one a page boundary landing inside a
- * group of tips with equal ledgerAt would either repeat or skip the rest of
- * that group. Which column plays that role is the caller's choice, since it
- * has to be a column the caller is willing to put in the cursor.
- *
- * The encoding is base64url over "<iso>|<key>" and is deliberately opaque: it
- * is a position in a result set, not an API surface. Clients echo back what
- * the previous response handed them.
+ * Thin tip-specific adapter over utils/cursor.ts for paging a creator's tips
+ * newest-first in ("ledgerAt" DESC, <key> DESC) order.
  */
+
+import {
+  cursorFilter as genericCursorFilter,
+  decodeCursor,
+  encodeCursor,
+} from "../../utils/cursor.js";
 
 /** The unique column a caller orders by after ledgerAt. */
 export type TipCursorKey = "id" | "txHash";
@@ -31,6 +22,16 @@ export interface TipCursor {
 
 const SEPARATOR = "|";
 
+/**
+ * Maximum length of a base64url-encoded cursor accepted by decodeTipCursor.
+ *
+ * Every cursor this server issues is "<24-char ISO timestamp>|<cuid or 64-char txHash>"
+ * (~50-90 bytes, ~68-120 base64url chars). Capping at 256 chars comfortably
+ * fits every legitimate cursor while preventing unauthenticated callers from
+ * inflating Redis cache keys with arbitrarily long cursor strings.
+ */
+export const MAX_CURSOR_LENGTH = 256;
+
 function badCursor(): Error {
   // A malformed cursor is a bad request, not a server fault — without a
   // statusCode the global error handler would report it as a 500.
@@ -41,20 +42,20 @@ function badCursor(): Error {
 }
 
 /** Encode the row a page ended on into the cursor for the page after it. */
-export function encodeTipCursor(ledgerAt: Date, key: string): string {
-  const raw = `${ledgerAt.toISOString()}${SEPARATOR}${key}`;
-  return Buffer.from(raw, "utf8").toString("base64url");
-}
+export const encodeTipCursor = encodeCursor;
 
 /**
  * Decode a cursor supplied by a client.
- *
- * Throws a 400 for anything that is not a cursor this module produced: the
- * value reaches a `WHERE` clause, and a half-parsed one (an Invalid Date, an
- * empty key) would silently page from the wrong place rather than fail.
+ * Throws a 400 for anything that is not a cursor this module produced.
  */
 export function decodeTipCursor(raw: string): TipCursor {
-  if (typeof raw !== "string" || raw.trim() === "") throw badCursor();
+  if (
+    typeof raw !== "string" ||
+    raw.trim() === "" ||
+    raw.length > MAX_CURSOR_LENGTH
+  ) {
+    throw badCursor();
+  }
 
   const decoded = Buffer.from(raw, "base64url").toString("utf8");
 
@@ -80,16 +81,14 @@ export function decodeTipCursor(raw: string): TipCursor {
 /**
  * The Prisma `where` fragment selecting rows strictly after `cursor` in
  * ("ledgerAt" DESC, <keyField> DESC) order.
- *
- * Expressed as an OR rather than a row-value comparison because Prisma has no
- * `(a, b) < (x, y)`: either the row is in an older ledger, or it shares the
- * cursor's ledger and sorts lower by the tiebreaker.
  */
-export function cursorFilter(cursor: TipCursor, keyField: TipCursorKey) {
-  return {
-    OR: [
-      { ledgerAt: { lt: cursor.ledgerAt } },
-      { ledgerAt: cursor.ledgerAt, [keyField]: { lt: cursor.key } },
-    ],
-  };
+export function cursorFilter<K extends TipCursorKey>(
+  cursor: TipCursor,
+  keyField: K,
+) {
+  return genericCursorFilter(
+    { timestamp: cursor.ledgerAt, key: cursor.key },
+    "ledgerAt",
+    keyField,
+  );
 }

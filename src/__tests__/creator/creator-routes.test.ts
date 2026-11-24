@@ -38,6 +38,10 @@ const renameSlugMock = jest.fn(async (input: { slug: string }) => ({
   slug: input.slug,
 }));
 const deleteCreatorMock = jest.fn(async () => undefined);
+const updateCreatorSplitsMock = jest.fn(async () => ({
+  id: CREATOR,
+  slug: "alice",
+}));
 const setTipMessageHiddenMock = jest.fn(
   async (
     _creatorId: string,
@@ -54,9 +58,11 @@ jest.unstable_mockModule("../../modules/creator/creator.service.js", () => ({
   claimSlug: claimSlugMock,
   renameSlug: renameSlugMock,
   updateProfile: jest.fn(),
-  updateCreatorSplits: jest.fn(),
+  updateCreatorSplits: updateCreatorSplitsMock,
   isSlugAvailable: jest.fn(),
   deleteCreator: deleteCreatorMock,
+  isEmailVerificationInCooldown: jest.fn(async () => false),
+  recordEmailVerificationCooldown: jest.fn(async () => undefined),
 }));
 
 jest.unstable_mockModule("../../modules/creator/messages.service.js", () => ({
@@ -182,6 +188,39 @@ describe("PATCH /me/slug", () => {
       creatorId: CREATOR,
       slug: "alice_new",
     });
+  });
+});
+
+describe("PATCH /me/splits", () => {
+  it("returns 400 when the splits array is empty", async () => {
+    const res = await app.inject({
+      method: "PATCH",
+      url: "/me/splits",
+      headers: authHeaders(),
+      payload: { splits: [] },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.fieldErrors.splits).toBeDefined();
+    expect(updateCreatorSplitsMock).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 when the splits array exceeds the maximum allowed splits", async () => {
+    const tooManySplits = Array.from({ length: 51 }, (_, i) => ({
+      to: `G${String.fromCharCode(65 + Math.floor(i / 26))}${String.fromCharCode(65 + (i % 26))}${"A".repeat(53)}`,
+      bps: 1,
+    }));
+
+    const res = await app.inject({
+      method: "PATCH",
+      url: "/me/splits",
+      headers: authHeaders(),
+      payload: { splits: tooManySplits },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.fieldErrors.splits).toBeDefined();
+    expect(updateCreatorSplitsMock).not.toHaveBeenCalled();
   });
 });
 
